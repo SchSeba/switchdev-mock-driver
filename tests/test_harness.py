@@ -36,6 +36,7 @@ class RenderTests(unittest.TestCase):
             self.documents(CLUSTER_TYPE="openshift",MCP_NAME="worker")
     def test_invalid_bdf_refused(self):
         with self.assertRaises(ValueError): self.documents(PF_BDF="../../etc")
+        with self.assertRaises(ValueError): self.documents(PF_BDF="0000:29:20.0")
     def test_policy_leaves_creation_to_operator(self):
         doc=self.documents()["20-nodepolicy.yaml"]["spec"]
         self.assertFalse(doc["externallyManaged"])
@@ -56,11 +57,38 @@ class RenderTests(unittest.TestCase):
             self.assertEqual("1",c["resources"]["requests"]["openshift.io/mock_smartnic"])
             self.assertEqual(["ALL"],c["securityContext"]["capabilities"]["drop"])
             self.assertFalse(c["securityContext"]["allowPrivilegeEscalation"])
+            self.assertEqual([{"name":"net.ipv4.ping_group_range","value":"0 2147483647"}],
+                             p["spec"]["securityContext"]["sysctls"])
     def test_yaml_roundtrip_if_parser_available(self):
         try: import yaml
         except ImportError: self.skipTest("PyYAML is optional for local validation")
         for doc in self.documents().values():
             self.assertEqual(doc,yaml.safe_load(renderer.yaml(doc)))
+
+class SafetyTests(unittest.TestCase):
+    def common(self, command, **values):
+        with tempfile.TemporaryDirectory() as d:
+            config=Path(d,"lab.env")
+            env={"PF_BDF":"0000:29:00.0", "NUM_VFS":"2",
+                 "REMOTE_DIR":"/var/tmp/mock-smartnic-lab", "SSH_TARGET":"mock-smartnic-dut",
+                 **values}
+            config.write_text("".join(f"{key}={value!r}\n" for key,value in env.items()))
+            return subprocess.run(["bash","-c",'source "$1"; '+command,"test",
+                                   str(ROOT/"scripts/lib/common.sh")],
+                                  env={**os.environ,"LAB_CONFIG":str(config)},
+                                  capture_output=True,text=True)
+    def test_empty_mutation_ack_refused(self):
+        result=self.common("mutation_guard; echo MUTATED",CLUSTER_MUTATION_ACK="")
+        self.assertNotEqual(0,result.returncode)
+        self.assertNotIn("MUTATED",result.stdout)
+    def test_invalid_config_refused_before_remote(self):
+        for values in ({"PF_BDF":"0000:29:20.0"},{"SSH_TARGET":"-oProxyCommand=evil"},
+                       {"REMOTE_DIR":"/var/tmp/../etc"},{"WAIT_SECONDS":"0"},
+                       {"REMOTE_TIMEOUT":"0"}):
+            with self.subTest(values=values):
+                result=self.common("echo MUTATED",**values)
+                self.assertNotEqual(0,result.returncode)
+                self.assertNotIn("MUTATED",result.stdout)
 
 class EvidenceTests(unittest.TestCase):
     def fixture(self):
@@ -71,6 +99,8 @@ class EvidenceTests(unittest.TestCase):
             "mapping.json":{"vfs":[{"pci":"0000:00:10.0","vf":0,"representor":"rep0"},
                                        {"pci":"0000:00:10.2","vf":1,"representor":"rep1"}]},
             "a-to-b.json":{"sent":10,"received":10},"b-to-a.json":{"sent":10,"received":10},
+            "ping-a-to-b.json":{"protocol":"icmp","sent":10,"received":10},
+            "ping-b-to-a.json":{"protocol":"icmp","sent":10,"received":10},
             "stats-before.json":{"schema_version":1,"offload_hits":2},
             "stats-after.json":{"schema_version":1,"offload_hits":20},
             "flows-before.json":flow(1),"flows-after.json":flow(10),
@@ -86,6 +116,9 @@ class EvidenceTests(unittest.TestCase):
         result=self.verify(self.fixture()); self.assertEqual(0,result.returncode,result.stderr)
     def test_connectivity_without_driver_hits_fails(self):
         data=self.fixture();data["stats-after.json"]["offload_hits"]=2
+        self.assertNotEqual(0,self.verify(data).returncode)
+    def test_udp_without_successful_ping_fails(self):
+        data=self.fixture(); data["ping-b-to-a.json"]["received"]=9
         self.assertNotEqual(0,self.verify(data).returncode)
     def test_stale_directional_flows_fail(self):
         data=self.fixture();data["flows-after.json"]=data["flows-before.json"]

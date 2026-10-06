@@ -20,6 +20,10 @@ require(a != b, "Pods allocated the same VF")
 for n in ("a-to-b.json", "b-to-a.json"):
     result = load(n)
     require(result["received"] == result["sent"] > 0, "UDP loss or mismatched payloads")
+for n in ("ping-a-to-b.json", "ping-b-to-a.json"):
+    result = load(n)
+    require(result.get("protocol") == "icmp" and result["received"] == result["sent"] > 0,
+            "ICMP loss or missing ping evidence")
 before, after = load("stats-before.json"), load("stats-after.json")
 require(after.get("schema_version") == 1, "Unexpected debugfs stats schema")
 require(after["offload_hits"] > before["offload_hits"], "No new simulator offload hits")
@@ -40,4 +44,4 @@ require(re.search(r'^HWOL="?true"?\s*$',ovs,re.M), "OVS hw-offload is not true")
 for pci in (pa,pb):
     require(mapping[pci]["representor"] in ovs, "OVS evidence is missing a selected representor")
 require("packets:" in ovs, "No OVS offloaded datapath flow with packet accounting")
-print("PASS: distinct allocated PCI VFs, net1 UDP payloads, TC in_hw, OVS offload, and new driver hits in both directions")
+print("PASS: distinct allocated PCI VFs, net1 ICMP/UDP, TC in_hw, OVS offload, and new driver hits in both directions")

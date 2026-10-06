@@ -13,12 +13,12 @@ set +a
 SRC_ROOT=${SRC_ROOT:-$ROOT}
 WAIT_SECONDS=${WAIT_SECONDS:-900}
 REMOTE_TIMEOUT=${REMOTE_TIMEOUT:-600}
-[[ ${PF_BDF:-} =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{2}:[[:xdigit:]]{2}\.[0-7]$ ]] || die 'Invalid PF_BDF'
+[[ ${PF_BDF:-} =~ ^[0-9a-f]{4}:[0-9a-f]{2}:[01][0-9a-f]\.[0-7]$ ]] || die 'Invalid PF_BDF'
 [[ ${NUM_VFS:-} =~ ^[0-9]+$ ]] && ((NUM_VFS >= 2 && NUM_VFS <= 7)) || die 'Use 2..7 VFs for the igb prototype.'
 [[ ${REMOTE_DIR:-} =~ ^/[a-zA-Z0-9_./-]+$ && $REMOTE_DIR != / && $REMOTE_DIR != /var && $REMOTE_DIR != /var/tmp && $REMOTE_DIR != *..* ]] || die 'Use a dedicated absolute REMOTE_DIR without spaces or ..'
 [[ ${SSH_TARGET:-} =~ ^[a-zA-Z0-9_@.:-]+$ && $SSH_TARGET != -* ]] || die 'Use an SSH config alias or user@host.'
-[[ $WAIT_SECONDS =~ ^[0-9]+$ ]] || die 'WAIT_SECONDS must be an integer.'
-[[ $REMOTE_TIMEOUT =~ ^[0-9]+$ ]] || die 'REMOTE_TIMEOUT must be an integer.'
+[[ $WAIT_SECONDS =~ ^[0-9]+$ ]] && ((10#$WAIT_SECONDS > 0)) || die 'WAIT_SECONDS must be a positive integer.'
+[[ $REMOTE_TIMEOUT =~ ^[0-9]+$ ]] && ((10#$REMOTE_TIMEOUT > 0)) || die 'REMOTE_TIMEOUT must be a positive integer.'
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10 -o ServerAliveInterval=15 -o ServerAliveCountMax=3)
 remote() {
     local cmd

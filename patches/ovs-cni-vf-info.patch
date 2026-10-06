@@ -1,0 +1,26 @@
+diff --git a/pkg/sriov/sriov.go b/pkg/sriov/sriov.go
+index bd4fa7cf..61ac389e 100644
+--- a/pkg/sriov/sriov.go
++++ b/pkg/sriov/sriov.go
+@@ -303,7 +303,7 @@ func SetupSriovInterface(contNetns ns.NetNS, containerID, ifName, mac string, mt
+ 	}
+ 
+ 	// make sure PF netlink and VF index are valid
+-	if len(pfLink.Attrs().Vfs) < vfIdx || pfLink.Attrs().Vfs[vfIdx].ID != vfIdx {
++	if vfIdx < 0 || len(pfLink.Attrs().Vfs) <= vfIdx || pfLink.Attrs().Vfs[vfIdx].ID != vfIdx {
+ 		return nil, nil, fmt.Errorf("failed to get vf info from %s at index %d with Vfs %v", pfIface, vfIdx, pfLink.Attrs().Vfs)
+ 	}
+ 
+diff --git a/vendor/github.com/vishvananda/netlink/handle_linux.go b/vendor/github.com/vishvananda/netlink/handle_linux.go
+index 358c175b..5a521fc9 100644
+--- a/vendor/github.com/vishvananda/netlink/handle_linux.go
++++ b/vendor/github.com/vishvananda/netlink/handle_linux.go
+@@ -10,7 +10,7 @@ import (
+ )
+ 
+ // Empty handle used by the netlink package methods
+-var pkgHandle = &Handle{}
++var pkgHandle = &Handle{options: HandleOptions{collectVFInfo: true}}
+ 
+ type HandleOptions struct {
+ 	lookupByDump  bool

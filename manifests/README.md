@@ -7,5 +7,7 @@ offload pool, switchdev node policy, OVSNetwork and two resource-requesting pods
 
 Kubernetes uses a node-selected pool with no nonempty HWOL name. OpenShift uses an
 existing dedicated MCP name and omits nodeSelector/maxUnavailable in that object.
-Read docs/04-kubernetes-flow.md before applying. These schemas were rendered and
-parsed locally, but no live Kubernetes admission or reconciliation was exercised.
+Read [the Kubernetes runbook](../docs/04-kubernetes-flow.md) before applying.
+The rendered Kubernetes lane passed live admission, operator reconciliation,
+OVS-CNI allocation, bidirectional ping and mock offload on the configured worker.
+The OpenShift lane remains untested; see [implementation status](../IMPLEMENTATION-STATUS.md).

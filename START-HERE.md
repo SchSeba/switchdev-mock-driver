@@ -1,9 +1,12 @@
-# Mock SmartNIC: Codex implementation and VM integration plan
+# Mock SmartNIC: driver and VM integration lab
 
-Prepared: 23 September 2026. Status: **plan and harness; driver not yet implemented**.
-The scripts have local static/fixture validation only; this package does not claim
-a successful compile, VM boot, operator reconciliation, or hardware-offload test.
-See the [validation report](VALIDATION-REPORT.md) for the exact local checks.
+Implemented and tested on the dedicated emulated igb worker. K00–K09 runtime
+passed, including real PCI VFs, devlink, TC execution, persistence/reboots and
+operator-managed OVS-CNI pods with bidirectional ping and mock offload counters.
+Resilience tests include 50 pod cycles, allocation recovery, kernel stress,
+module reload and reboot. See [implementation status](IMPLEMENTATION-STATUS.md)
+for exact commands, versions, failures and evidence; the original
+[validation report](VALIDATION-REPORT.md) describes the starting harness only.
 
 ## Outcome
 
@@ -23,7 +26,7 @@ SriovOperatorConfig.manageSoftwareBridges
 “Offloaded” here means delegated through Linux's driver offload API to the mock
 engine. It does not mean physical acceleration, line rate, or mlx5 compatibility.
 The first full flow uses **two pods on one worker VM**, kernel VF netdevices and
-unprivileged UDP. The management NIC remains separate and untouched.
+unprivileged ICMP and UDP. The management NIC remains separate and untouched.
 
 ## Deliverables and reading order
 
@@ -35,9 +38,9 @@ unprivileged UDP. The management NIC remains separate and untouched.
 6. [Primary-source references and pinned research](docs/06-sources.md).
 
 AGENTS.md supplies repository-level instructions. scripts/ contains executable
-starting harnesses, config/ contains example inputs, and manifests/ contains
+lab harnesses, config/ contains example inputs, and manifests/ contains
 reviewable examples. The scripts use normal SSH and a local kubectl/oc context.
-No credentials or running-VM address were supplied, so access values are inputs.
+Site values live in ignored config/lab.env; keys and kubeconfigs remain outside the repository.
 
 ## Give Codex this instruction
 
@@ -53,16 +56,13 @@ engine counters. Record failures honestly in IMPLEMENTATION-STATUS.md. Do not
 change or use the management NIC, passthrough devices, or unrelated policies.
 ```
 
-## Repository shape to build
+## Repository shape
 
 ```text
 driver/
-  Makefile Kbuild mock_smartnic.h
-  main.c pci_pf.c pci_vf.c devlink.c netdev.c eswitch.c
-  tc.c flow_parse.c flow_exec.c stats.c debugfs.c
-  compat.h                     # only genuinely needed target-kernel shims
+  Makefile mock_smartnic.h LOCKING.md
+  main.c pci_pf.c pci_vf.c devlink.c netdev.c eswitch.c tc.c
 tests/
-  unit/                        # matcher/action tests, KUnit or equivalent
   integration/                 # lifecycle, namespaces, TC, OVS, Kubernetes
   test_harness.py              # supplied local fixtures; extend them
 scripts/                       # supplied executable lab harness
@@ -83,8 +83,8 @@ cp config/lab.env.example config/lab.env
 
 Do not set mutation acknowledgements until the emulated PF, independent management
 path, dedicated lab ownership and console recovery have been checked. The scripts
-refuse to use pci-testdev or an unattested PF. **The build command intentionally
-fails until Codex creates driver/Makefile and implements the module.**
+refuse to use pci-testdev or an unattested PF. The build uses the guest running kernel and requires its matching kernel-devel.
+The tested pin is 5.14.0-427.el9.x86_64.
 
 ## Execution ladder after implementation
 

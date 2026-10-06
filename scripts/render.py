@@ -59,7 +59,7 @@ def build() -> dict[str, dict]:
     image = value("WORKLOAD_IMAGE", "python:3.12-slim")
     if platform not in {"kubernetes", "openshift"}:
         raise ValueError("CLUSTER_TYPE must be kubernetes or openshift")
-    if not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[0-9a-f]{2}\.[0-7]", bdf):
+    if not re.fullmatch(r"[0-9a-f]{4}:[0-9a-f]{2}:[01][0-9a-f]\.[0-7]", bdf):
         raise ValueError("PF_BDF must be a lower-case, full-domain PCI BDF")
     if not 2 <= count <= 7:
         raise ValueError("The initial igb laboratory contract supports 2..7 VFs")
@@ -115,6 +115,7 @@ def build() -> dict[str, dict]:
                 "annotations": {"k8s.v1.cni.cncf.io/networks": json.dumps([
                     {"name": network, "namespace": wns, "interface": "net1"}])}},
             "spec": {"nodeSelector": labels, "terminationGracePeriodSeconds": 5,
+                "securityContext": {"sysctls": [{"name": "net.ipv4.ping_group_range", "value": "0 2147483647"}]},
                 "containers": [{"name": "echo", "image": image, "imagePullPolicy": "IfNotPresent",
                     "command": ["python3", "-u", "-c", echo], "securityContext": security,
                     "resources": {"requests": {f"{prefix}/{resource}": "1", "cpu": "50m", "memory": "32Mi"},

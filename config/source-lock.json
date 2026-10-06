@@ -1,0 +1,65 @@
+{
+  "qemu": {
+    "version": "8.2.0",
+    "tag": "v8.2.0",
+    "machine": "pc-q35-8.2",
+    "carrier": "emulated Intel 82576 igb",
+    "pf": "8086:10c9",
+    "vf": "8086:10ca"
+  },
+  "kernel": {
+    "release": "5.14.0-427.el9.x86_64",
+    "source_rpm": "kernel-5.14.0-427.el9.src.rpm",
+    "source_rpm_sha256": "b8e6d110634873a0eda61fcd2cf06cb8c9731f808e25c78ccc5ec95df019e29d",
+    "config_sha256": "dc3ea2083348a97a49473d09ab6b5179eec5f922de2ddf52ee742f6991444910"
+  },
+  "driver": {
+    "compiled_source_sha256": "4b0ef9f0cbe3c044eba363b3c83a0f3d6f87042b9c5f632ec7a2fe7be4c4c1c9",
+    "source_hash_method": "sorted handwritten driver/*.c, *.h and Makefile basename+NUL+contents+NUL; excludes generated *.mod.c",
+    "module_sha256": "198d28fe17afcd259c62eff281ce9244273020c9a83cb5ed3bdb78ef7edef498"
+  },
+  "operator": {
+    "revision": "a5588da21699fccce921cb1d4ac5894f47889399",
+    "patch": "patches/operator-systemd-ovs.patch",
+    "patch_sha256": "3366abe79d7b92bf514a877d1a0bbeef682451757cc02efdd06757093fe7815a"
+  },
+  "ovs_cni": {
+    "revision": "19262a0c9f304dc9cb04454afeed77e6ca77950b",
+    "patch": "patches/ovs-cni-vf-info.patch",
+    "patch_sha256": "b986332e3f9b791d3be847f7e662a466b1bb9ee2c3d080ea1db73a5e9431af92",
+    "sriovnet": "v1.3.0",
+    "installed_binary_sha256": "66e9dc66b64607300d72e7bc7cf053cfb366cd85cffb2a94a45b2df9c87c7c87"
+  },
+  "ovs": {
+    "version": "3.5.3",
+    "package": "openvswitch3.5-3.5.3-6.el9s.x86_64"
+  },
+  "kubernetes": "v1.34.2",
+  "go_build": "go1.26.8 linux/arm64 -> linux/amd64 CGO_ENABLED=0",
+  "component_manifest_digests": {
+    "sriovCni": "sha256:ea36f16007622fadf3d1773b896a851c9ace28eadd6e530dc0fd3723f5599cad",
+    "ibSriovCni": "sha256:b1b93865efa29809bec0ecdb48910154a0085e3545f12e88d95d07734feb138a",
+    "rdmaCni": "sha256:9d4f389cfdaac40309d21643ff6c6880e8eef3873ce4edc57f8f2203d70f4ddf",
+    "sriovDevicePlugin": "sha256:382bcd735c7a19d39868d357ea1335d34f90805d7c7f356b6e51ceaee74d9b0b",
+    "resourcesInjector": "sha256:b7b17e1e56378d136ce03edc37b2fe606479b977db2eb7006a057b44abe57bcf",
+    "metricsExporter": "sha256:9c5d88a799db43899ff63a700a50296efeb436ca44159c57e172f1c993eef41f",
+    "operator": "sha256:86f5bf6ff36c598ecd8b88a623a5781fd74f2e46740403d1805d0bdbe61cb5b9",
+    "sriovConfigDaemon": "sha256:4bae3460f156288177a6c36b3f8355d17402de9b5298b92442b6562bb698367b",
+    "webhook": "sha256:3ce62a6c42255ce6e5d0e2eec7eeebf537efa02744a172601706f3a621ac101b",
+    "ovsCni": "sha256:526bd01fc6f5e9770722a56724a5bf753a8598408cf1e82e00193eaa30ea8cf0",
+    "metricsExporterKubeRbacProxy": "sha256:23bf4d4ddbb6827ede3a26d98814e3f3733b257e8b70de54c77e78eb7ed6d719"
+  },
+  "runtime_parent_manifest_digests": {
+    "operator": "sha256:97cd3f4a5d42044528a4224bbbeccee4e786ebc6cf0db8f2a3e0b52163fe817e",
+    "daemon": "sha256:81b5712c3d22b4d735765c1b66a3451e6ae24c381fadb8d4515ebe0f01f4141a",
+    "webhook": "sha256:6ab0ab76d7a4518252acdff190eeb79defc1f4d1ed11121f875dfa013a2ca4a8"
+  },
+  "workload_manifest_digest": "sha256:ddb0207ae1f0356c2b724d740769b0c5f5f51cc54a0525178f721825f78fe74c",
+  "container_runtime": "cri-o://1.34.11",
+  "existing_network_manifest_digests": {
+    "kube-multus": "ghcr.io/k8snetworkplumbingwg/multus-cni@sha256:047b288ceb4e2b1e0f43526138f1953d6266f5f8d9cc102d612bd4aeb9bb1d10",
+    "kube-proxy": "registry.k8s.io/kube-proxy@sha256:1512fa1bace72d9bcaa7471e364e972c60805474184840a707b6afa05bde3a74",
+    "kube-flannel": "ghcr.io/flannel-io/flannel@sha256:708a2c9c1cfbfe529d1dbb249cb7113af117f3ed26b5e3e4c8ee015e10555204"
+  },
+  "iproute2": "6.17.0 (libbpf 1.3.0)"
+}

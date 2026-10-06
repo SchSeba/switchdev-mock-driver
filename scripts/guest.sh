@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# DUT-side harness. Driver interfaces below are implementation requirements, NOT
-# claims that mock_smartnic.ko already exists. Run through scripts/lab.sh.
+# DUT-side build, binding and inspection harness. Run through scripts/lab.sh.
 set -Eeuo pipefail
 HERE=$(cd -- "$(dirname -- "$0")" && pwd)
 # shellcheck disable=SC1091

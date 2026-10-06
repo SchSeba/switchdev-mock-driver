@@ -1,0 +1,14 @@
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+USER 0
+RUN rm -rf /bindata
+LABEL org.opencontainers.image.revision="a5588da21699fccce921cb1d4ac5894f47889399"
+LABEL org.opencontainers.image.source="https://github.com/k8snetworkplumbingwg/sriov-network-operator"
+COPY manager /usr/bin/sriov-network-operator
+COPY sriov-network-operator-config-cleanup /usr/bin/sriov-network-operator-config-cleanup
+COPY bindata /bindata
+USER 65532:65532
+CMD ["/usr/bin/sriov-network-operator"]
+
+ARG PATCH_SHA256
+LABEL mock-smartnic.patch-sha256="${PATCH_SHA256}"

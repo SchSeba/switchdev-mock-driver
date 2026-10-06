@@ -236,6 +236,46 @@ missing module on a disposable snapshot. If a kernel update occurs, rebuild/sign
 for that exact kernel before enabling workloads; do not force-load the old binary.
 The bootstrap unit intentionally does not configure the operator's VFs/bridge.
 
+The executable gate `tests/integration/reboot.sh` verifies machine identity,
+zero VFs, enabled persistent binding, kernel identity, a changed boot ID and
+monotonic startup ordering. It drains only the configured DUT, uses bounded SSH
+polls, and restores scheduling only after the checks pass. It requires populated
+`PERSISTENCE_ACK`, `OPERATOR_REBOOT_ACK` and `VM_RECOVERY_ACK`; inspect the recovery
+snapshot and console first. A failed gate leaves the DUT cordoned for recovery.
+
+### Signed delivery and kernel changes
+
+On a guest that enforces signatures, provision a matching private key and trusted
+certificate through that guest's existing enrollment process. Keep the private
+key outside this repository and its transfer directory. Sign the already-built
+guest module with the pinned kernel's native tool, then persist that same file:
+
+```bash
+# Run on the guest. These are paths to provisioned files, not key contents.
+sudo /lib/modules/$(uname -r)/build/scripts/sign-file sha256 \
+  /secure/module-signing.key /secure/module-signing.der \
+  /var/tmp/mock-smartnic-lab/src/driver/mock_smartnic.ko
+modinfo -F signer /var/tmp/mock-smartnic-lab/src/driver/mock_smartnic.ko
+sha256sum /var/tmp/mock-smartnic-lab/src/driver/mock_smartnic.ko
+# From the controller, install the signed artifact without rebuilding it:
+./scripts/lab.sh persist
+```
+
+Signer metadata alone does not prove trust. Require actual module load on the
+enforcing guest and retain its kernel log; missing enrollment is a prerequisite
+failure. The CentOS lab tested unsigned loading with lockdown disabled by its
+existing configuration; no enforcement setting was changed. The signed lane is
+not runtime tested there.
+
+For a kernel change, first remove workloads through their owners and drain the
+DUT. Remove persistence and restore the native carrier. Boot the explicitly
+selected new kernel with console recovery available; kubelet must remain stopped
+until a matching module is rebuilt, signed if required, bound, tested and installed.
+Use matching kernel-devel/source, record their identities and the new module hash,
+rerun PCI/devlink/flower/direct-TC/OVS gates, install persistence, and repeat the
+reboot gate before uncordoning. Never force-load an old module, delete the kubelet
+dependency to bypass a failed bind, or assume a kernel upgrade preserves APIs.
+
 ## 8. Code-change iteration
 
 Before unloading/rebuilding a live driver: remove test pods; remove their network

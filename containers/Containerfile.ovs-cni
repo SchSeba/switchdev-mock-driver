@@ -1,0 +1,15 @@
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+USER 0
+RUN rm -f /usr/bin/webhook
+LABEL org.opencontainers.image.revision="19262a0c9f304dc9cb04454afeed77e6ca77950b"
+LABEL org.opencontainers.image.source="https://github.com/k8snetworkplumbingwg/ovs-cni"
+COPY ovs /ovs
+COPY ovs-mirror-producer /ovs-mirror-producer
+COPY ovs-mirror-consumer /ovs-mirror-consumer
+COPY marker /marker
+COPY .version /.version
+CMD ["/ovs"]
+
+ARG PATCH_SHA256
+LABEL mock-smartnic.patch-sha256="${PATCH_SHA256}"

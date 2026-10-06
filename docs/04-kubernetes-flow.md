@@ -65,6 +65,14 @@ git -C ../sriov-network-operator checkout a5588da21699fccce921cb1d4ac5894f478893
 APPROVE_RENDERED_OPERATOR=YES ./scripts/install-operator.sh
 ```
 
+For an existing Helm owner, use `./scripts/install-operator.sh upgrade RELEASE`
+and inspect the render before rerunning with `APPROVE_RENDERED_OPERATOR=YES`.
+The release must match the operator configuration's Helm ownership annotation.
+Upgrade preserves existing release values, admission/cert-manager settings and
+feature gates, scopes the daemon to the DUT, and applies the source-pinned SR-IOV
+CRDs because Helm does not update `crds/` during upgrade. It leaves Multus's
+shared NAD CRD with its existing owner. OLM installations use their owner instead.
+
 `OPERATOR_IMAGE_VALUES` is a real local YAML file of pullable compatible component
 images. Do not invent image tags from the source commit. Resolve an approved
 published build or build/push the operator and config-daemon from the same source
@@ -92,6 +100,29 @@ This example is a schema, not valid image credentials or published digest data.
 Use existing registry authentication via the platform; never store pull secrets in
 the agent's committed config. Inspect all rendered container images and image-env
 variables. Keep image lock and source lock associated in the test report. [S18]
+
+The tested source pins need two reproducible corrections in `patches/`:
+`operator-systemd-ovs.patch` fixes the OVS unit's quoting and uses direct systemd
+arguments for config values; `ovs-cni-vf-info.patch` restores VF metadata in the
+vendored netlink default handle and guards an empty VF list. Both were observed
+at runtime; neither changes device identity or fabricates topology/status.
+
+`scripts/build-components.sh` applies those patches to dedicated pinned checkouts,
+runs their renderer checks, builds static amd64 programs, and builds the four
+images using `containers/Containerfile.*`. Set `OVS_CNI_SOURCE` and
+`RUNTIME_IMAGE_OPERATOR`, `RUNTIME_IMAGE_DAEMON`, `RUNTIME_IMAGE_WEBHOOK` in the
+local lab config. Each runtime parent must be an inspected immutable image digest
+or local `sha256:` image ID, already available to Podman. The tested lab reused
+existing runtime libraries and replaced all active binaries/bindata; record both
+the parent and patch hashes. Published source-built parents are also usable.
+
+```bash
+./scripts/build-components.sh
+./tests/integration/ovs-unit.sh  # actual renderer through guest systemd; no OVS mutation
+# Archive each resulting localhost/mock-smartnic-ROLE:REV image with podman save.
+# Push the archive to the authorized lab registry with skopeo copy --preserve-digests.
+# Record the returned digest in OPERATOR_IMAGE_VALUES before the owner upgrade.
+```
 
 The installer scopes config-daemon placement to `mock-smartnic.test/target=dut`.
 The test scripts also scope the policy and pods with that label. Ensure exactly
@@ -305,10 +336,11 @@ spec:
           openshift.io/mock_smartnic: "1"
 ```
 
-The executable rendered pods run unprivileged UDP with all capabilities dropped,
+The executable rendered pods run unprivileged UDP and ICMP with all capabilities dropped,
 no privileged host mount and no host networking. Vanilla Kubernetes uses explicit
 nonroot UID 10000; the OpenShift renderer leaves UID assignment to the admitted
-SCC. Do not grant privileged SCC merely to make an ordinary UDP test work.
+SCC. ICMP uses Linux ping datagram sockets with the pod's safe
+`net.ipv4.ping_group_range` sysctl; no NET_RAW capability is needed.
 
 Discover net1 IPs and allocated BDFs, not assumed pod order:
 
@@ -340,11 +372,17 @@ waits for real resources, creates OVSNetwork, checks the generated NAD's resourc
 key, creates the two pods and waits for readiness. It does not touch PF/VF counts
 or OVS bridge ports itself. Existing same-name unowned resources are rejected.
 
-Verify sends address-bound UDP on net1, correlates distinct allocated BDFs with
+Verify sends address-bound ICMP and UDP on net1, correlates distinct allocated BDFs with
 PF virtfn indexes, checks TC in_hw, OVS offloaded datapath evidence, simulator
 hit growth and **directional per-flow packet growth for this exact VF pair**.
 It is intentionally stronger than “a packet went through” or “some unrelated
 flow was offloaded”. Collect component logs separately if the stage fails.
+
+Evidence collection keeps this pair's flows active with a bounded UDP exchange
+(180-second deadline, 190-second client timeout). This prevents normal OVS idle
+eviction between SSH snapshots; it does not install rules or alter OVS timeouts.
+The verifier requires successful ICMP in both directions, successful UDP payload
+checks and increasing counters while the OVS-generated flows are present.
 
 An OVS rule may initially fall back because the mock driver rejects a mask/action.
 Collect the actual rule/extack, implement the missing in-scope behavior and retry.

@@ -68,10 +68,20 @@ case "$ACTION" in
     [[ ${OPERATOR_REBOOT_ACK:-} == YES ]] || die 'Set OPERATOR_REBOOT_ACK=YES; the operator may reboot this lab worker.'
     [[ $CLUSTER_TYPE == kubernetes ]] || die 'OpenShift: render manifests, then follow the dedicated MCP/KMM runbook; automatic apply is intentionally gated.'
     preflight
-    "$ROOT/scripts/lab.sh" operator-preflight
     ensure_owned sriovnetworknodepolicy "$POLICY_NAME" "$OPERATOR_NAMESPACE"
     ensure_owned sriovnetworkpoolconfig "$POOL_NAME" "$OPERATOR_NAMESPACE"
     ensure_owned ovsnetwork "$NETWORK_NAME" "$OPERATOR_NAMESPACE"
+    if k -n "$OPERATOR_NAMESPACE" get sriovnetworknodepolicy "$POLICY_NAME" -o json > "$A/policy-retry.json" 2>/dev/null; then
+      jq -e --arg p "$PF_BDF" --arg r "$RESOURCE_NAME" --argjson n "$NUM_VFS" '
+        .spec.nicSelector.rootDevices==[$p] and .spec.numVfs==$n and
+        .spec.resourceName==$r and .spec.eSwitchMode=="switchdev" and
+        .spec.nodeSelector=={"mock-smartnic.test/target":"dut"}' "$A/policy-retry.json" >/dev/null || die 'Existing owned policy differs from this test; reconcile/clean it up before retrying.'
+      remote sudo -n test -f "/var/lib/mock-smartnic-lab/$PF_BDF/persisted"
+      remote sudo -n systemctl is-enabled --quiet mock-smartnic-lab.service
+      [[ $(remote readlink -f "/sys/bus/pci/devices/$PF_BDF/driver") == /sys/bus/pci/drivers/mock_smartnic_pf ]] || die 'Owned policy retry requires the persistent mock PF binding.'
+    else
+      "$ROOT/scripts/lab.sh" operator-preflight
+    fi
     if k get ns "$WORKLOAD_NAMESPACE" >/dev/null 2>&1; then
       owner=$(k get ns "$WORKLOAD_NAMESPACE" -o json | jq -r '.metadata.labels["app.kubernetes.io/part-of"] // ""')
       [[ $owner == "$OWN" ]] || die 'Workload namespace exists and is not owned by this harness.'
@@ -91,6 +101,9 @@ case "$ACTION" in
     k apply -f "$ROOT/rendered/20-nodepolicy.yaml"
     wait_policy
     k wait node/"$NODE_NAME" --for=condition=Ready --timeout="${WAIT_SECONDS}s"
+    remote sudo -n systemctl is-active --quiet ovs-vswitchd.service || die 'Operator OVS service is not active; collect its drop-in and journal before creating pods.'
+    remote sudo -n ovs-vsctl --format=json --columns=other_config list Open_vSwitch > "$A/ovs-config.json"
+    jq -e '.data[0][0][1]|map({key:.[0],value:.[1]})|from_entries|.["hw-offload"]=="true" and .["tc-policy"]=="none"' "$A/ovs-config.json" >/dev/null || die 'Operator pool configuration did not reach the actual OVSDB.'
     k apply -f "$ROOT/rendered/30-ovsnetwork.yaml"
     end=$((SECONDS+WAIT_SECONDS))
     until k -n "$WORKLOAD_NAMESPACE" get network-attachment-definition "$NETWORK_NAME" -o json > "$A/nad.json" 2>/dev/null; do
@@ -114,12 +127,20 @@ case "$ACTION" in
     pa=$(pod_pci mock-ovs-a); pb=$(pod_pci mock-ovs-b)
     [[ $pa =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{2}:[[:xdigit:]]{2}\.[0-7]$ && $pb =~ ^[[:xdigit:]]{4}:[[:xdigit:]]{2}:[[:xdigit:]]{2}\.[0-7]$ && $pa != "$pb" ]] || die 'Resolve distinct allocated PCI BDFs via device-plugin env or pod-resources; do not infer them from pod ordering.'
     "$ROOT/scripts/lab.sh" mapping > "$A/mapping.json"
+    k -n "$WORKLOAD_NAMESPACE" exec -i mock-ovs-a -- python3 - "$ia" "$ib" < "$ROOT/scripts/ping-probe.py" | tee "$A/ping-a-to-b.json"
+    k -n "$WORKLOAD_NAMESPACE" exec -i mock-ovs-b -- python3 - "$ib" "$ia" < "$ROOT/scripts/ping-probe.py" | tee "$A/ping-b-to-a.json"
     # Warm up neighbor discovery and OVS megaflow installation; bounded retries.
     for attempt in 1 2 3; do
       if k -n "$WORKLOAD_NAMESPACE" exec -i mock-ovs-a -- python3 - "$ia" "$ib" --count 30 < "$ROOT/scripts/udp-probe.py"; then break; fi
       [[ $attempt != 3 ]] || die 'Warm-up connectivity failed.'
       sleep 2
     done
+    # Keep the tested pair's OVS flows alive during SSH evidence collection;
+    # normal OVS idle eviction otherwise removes them between separate reads.
+    timeout --foreground 190 "$KUBECTL" --context "$KUBE_CONTEXT" -n "$WORKLOAD_NAMESPACE" exec -i mock-ovs-a -- \
+      python3 - "$ia" "$ib" --count 15000 --deadline 180 < "$ROOT/scripts/udp-probe.py" > "$A/keepalive.json" &
+    keepalive=$!
+    trap 'kill "$keepalive" 2>/dev/null || true; wait "$keepalive" 2>/dev/null || true' EXIT
     sleep 3
     "$ROOT/scripts/lab.sh" stats > "$A/stats-before.json"
     "$ROOT/scripts/lab.sh" flows > "$A/flows-before.json"
@@ -132,6 +153,8 @@ case "$ACTION" in
     "$ROOT/scripts/lab.sh" ovs-evidence > "$A/ovs.txt"
     python3 "$ROOT/scripts/verify-evidence.py" "$A" "$pa" "$pb"
     k -n "$WORKLOAD_NAMESPACE" get pods mock-ovs-a mock-ovs-b -o json > "$A/pods.json"
+    wait "$keepalive"
+    trap - EXIT
     ;;
   collect)
     k -n "$OPERATOR_NAMESPACE" get sriovoperatorconfig,sriovnetworkpoolconfig,sriovnetworknodepolicy,sriovnetworknodestate,ovsnetwork -o yaml > "$A/objects.yaml"

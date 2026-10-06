@@ -41,7 +41,7 @@ compare new warnings rather than blaming the module for unrelated old boot logs.
 | K02 | NodePolicy creates VFs/switchdev/bridge | Spec/status agree; bridge is operator-owned. |
 | K03 | OVSNetwork controller | Generated NAD has correct CNI config/resource annotation. |
 | K04 | Pod allocation/CNI | Separate BDFs; VF in pod; correct rep attached by ovs-cni. |
-| K05 | net1 two-way UDP plus offload evidence | All supplied evidence assertions pass. |
+| K05 | net1 two-way ICMP/UDP plus offload evidence | All supplied evidence assertions pass. |
 | K06 | Pod deletion/recreation | CNI DEL cleans host ports; VF can be allocated again. |
 | R01 | 50 pod cycles; 10 mode/VF cycles | No leaks, warnings, stale ports, inaccurate resource counts. |
 | R02 | Module teardown/debugfs readers | No invalid refs or unload deadlock. |
@@ -50,7 +50,7 @@ compare new warnings rather than blaming the module for unrelated old boot logs.
 
 Numbering here is a test taxonomy, not the implementation-package numbering.
 
-## 3. Unit tests to implement
+## 3. Matcher and harness tests
 
 Use KUnit where suitable for pure matcher/action normalization; a userspace mirror
 may supplement it but is not a substitute for the actual compiled kernel code.
@@ -63,9 +63,13 @@ Test reference release: every acquired netdev/port reference has a matching rele
 on add failure, successful delete, block unbind, VF removal and module unload.
 Test stats accumulation/delta reporting, concurrent reads and lastused semantics.
 
-The supplied tests/test_harness.py covers config/rendering and synthetic evidence
-accept/reject cases, not a kernel implementation. Expand shell runner tests with
-mocked ssh/rsync/kubectl tools to verify refusal before mutation and proper quoting.
+`tests/integration/flower-engine.sh` exercises the actual compiled kernel matcher,
+actions, extacks, failed replacements, capacity and counter stability. Module
+probe also checks linear and page-fragment packet parsing. These are runtime
+tests, not KUnit coverage. `tests/test_harness.py` separately checks configuration,
+refusal before mutation and synthetic evidence acceptance/rejection, including
+missing ping. `ovs-unit.sh` passes the real source renderer through guest systemd
+and checks literal arguments. See IMPLEMENTATION-STATUS.md for executed results.
 
 ## 4. Kernel concurrency and lifecycle stress
 
@@ -167,5 +171,56 @@ cluster/node versions and tested feature subset. Include K02 outcome, direct TC
 negative control, reboot result and final pair-specific evidence.
 
 Use these distinct states: NOT IMPLEMENTED; IMPLEMENTED NOT BUILT; BUILT NOT RUN;
-RUNTIME FAILED; RUNTIME PASSED. This delivered planning package only has local
-harness tests. Codex must not turn that into a claim that the driver was validated.
+RUNTIME FAILED; RUNTIME PASSED. The original VALIDATION-REPORT.md describes the
+starting harness. Current driver/runtime results belong in IMPLEMENTATION-STATUS.md,
+with portable versions and hashes in config/source-lock.json.
+
+## 9. Replay resilience and CI
+
+Start with the proven two-pod flow and the configured dedicated lab:
+
+```bash
+./tests/integration/pod-cycles.sh 50
+./tests/integration/allocation-recovery.sh
+```
+
+The first test proves two-VF scheduler exhaustion and recovery, then checks
+bidirectional ping, actual PCI allocation, new mock offload hits and clean CNI DEL
+in every cycle. It finishes with no workload pods. The second asks the network
+controller for a separately owned network with one valid host-local address.
+Its second sandbox must report real IPAM exhaustion; deleting the first pod must
+allow that same second pod to recover. It deletes its own pods/network/NAD.
+
+Follow sections 6–7 to clean up the main network/policy, wait for empty NodeState
+interfaces/bridges, delete the owned pool, and verify that the operator removed
+`/etc/sriov-operator/pci/PF_BDF`. Only then run the isolated kernel lane:
+
+```bash
+./scripts/lab.sh reset
+./scripts/lab.sh vfs
+./tests/integration/kernel-stress.sh
+./tests/integration/reboot.sh  # stress leaves zero VFs and legacy mode
+```
+
+Kernel stress replaces redirect/drop rules under real VF traffic and concurrent
+debugfs reads, checks duplicate delivery and the rule-deletion negative control,
+cycles real VF counts/modes ten times, and holds a debugfs file across PF removal.
+It verifies module-owner pinning, closes the file, then unloads/reloads the module.
+All waits have deadlines. This manual VF creation belongs only to the isolated
+kernel test, after operator ownership cleanup. Restore the final demonstration
+with `kube.sh apply` and `kube.sh verify`; let the controllers recreate everything.
+
+```bash
+./scripts/ci.sh local
+./scripts/ci.sh vm          # clean operator state, zero VFs, dedicated empty OVS
+./scripts/ci.sh kubernetes  # persistent module and installed pinned components
+./scripts/ci.sh openshift   # explicit SKIP/77 until its separate lab exists
+```
+
+Before the standalone VM lane, remove only the completed test's OVS drop-in and
+owned other_config keys as described in section 7. Otherwise its startup hook
+would override the standalone test's skip_hw/skip_sw controls. Missing explicit
+lab configuration is SKIP/77, never a runtime pass. CI verdicts are JSON under
+artifacts/ci; the GitHub workflow runs only the local lane. The tested release
+kernel has DEBUG_LIST enabled but no KASAN/PROVE_LOCKING. Debug-kernel, enforced
+signing and OpenShift/MCO coverage remain explicitly NOT TESTED.
