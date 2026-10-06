@@ -1,0 +1,40 @@
+# EXAMPLE ONLY. Render actual lab values with scripts/kube.sh render.
+"apiVersion": "v1"
+"kind": "Pod"
+"metadata":
+  "name": "mock-ovs-a"
+  "namespace": "mock-sriov-e2e"
+  "labels":
+    "app.kubernetes.io/part-of": "mock-smartnic-lab"
+  "annotations":
+    "k8s.v1.cni.cncf.io/networks": "[{\"name\": \"mock-ovs\", \"namespace\": \"mock-sriov-e2e\", \"interface\": \"net1\"}]"
+"spec":
+  "nodeSelector":
+    "mock-smartnic.test/target": "dut"
+  "terminationGracePeriodSeconds": 5
+  "containers":
+    -
+      "name": "echo"
+      "image": "python:3.12-slim"
+      "imagePullPolicy": "IfNotPresent"
+      "command":
+        - "python3"
+        - "-u"
+        - "-c"
+        - "import socket\ns=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)\ns.bind(('0.0.0.0',9000))\nprint('udp echo ready',flush=True)\nwhile True:\n data,peer=s.recvfrom(65535)\n s.sendto(data,peer)\n"
+      "securityContext":
+        "allowPrivilegeEscalation": false
+        "capabilities":
+          "drop":
+            - "ALL"
+        "runAsNonRoot": true
+        "seccompProfile":
+          "type": "RuntimeDefault"
+      "resources":
+        "requests":
+          "openshift.io/mock_smartnic": "1"
+          "cpu": "50m"
+          "memory": "32Mi"
+        "limits":
+          "openshift.io/mock_smartnic": "1"
+          "memory": "128Mi"

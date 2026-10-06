@@ -1,0 +1,7 @@
+# EXAMPLE ONLY. Render actual lab values with scripts/kube.sh render.
+"apiVersion": "v1"
+"kind": "Namespace"
+"metadata":
+  "name": "mock-sriov-e2e"
+  "labels":
+    "app.kubernetes.io/part-of": "mock-smartnic-lab"

@@ -1,0 +1,7 @@
+{
+  "spec": {
+    "featureGates": {
+      "manageSoftwareBridges": true
+    }
+  }
+}

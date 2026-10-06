@@ -1,0 +1,12 @@
+# EXAMPLE ONLY. Render actual lab values with scripts/kube.sh render.
+"apiVersion": "sriovnetwork.openshift.io/v1"
+"kind": "OVSNetwork"
+"metadata":
+  "name": "mock-ovs"
+  "namespace": "sriov-network-operator"
+  "labels":
+    "app.kubernetes.io/part-of": "mock-smartnic-lab"
+"spec":
+  "networkNamespace": "mock-sriov-e2e"
+  "resourceName": "mock_smartnic"
+  "ipam": "{\"type\": \"host-local\", \"subnet\": \"198.19.0.0/24\", \"rangeStart\": \"198.19.0.10\", \"rangeEnd\": \"198.19.0.50\"}"

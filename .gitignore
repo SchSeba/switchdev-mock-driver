@@ -1,0 +1,13 @@
+config/lab.env
+config/images.lock.yaml
+artifacts/
+rendered/
+*.ko
+*.o
+*.mod
+*.mod.c
+*.cmd
+Module.symvers
+modules.order
+.tmp_versions/
+__pycache__/
