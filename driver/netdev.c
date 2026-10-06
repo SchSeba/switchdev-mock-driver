@@ -88,15 +88,19 @@ static int msnic_set_vf_mac(struct net_device *dev, int vf, u8 *mac)
 {
 	struct msnic_port *port = msnic_vf_port(dev, vf);
 	struct net_device *endpoint;
-	struct sockaddr addr = { .sa_family = ARPHRD_ETHER };
+	/* New kernels take sockaddr_storage; old kernels take sockaddr. */
+	union {
+		struct sockaddr addr;
+		struct sockaddr_storage storage;
+	} mac_addr = { .addr.sa_family = ARPHRD_ETHER };
 	int err;
 
 	if (!port || !is_valid_ether_addr(mac))
 		return -EINVAL;
 	endpoint = rtnl_dereference(port->endpoint);
 	if (endpoint) {
-		ether_addr_copy(addr.sa_data, mac);
-		err = dev_set_mac_address(endpoint, &addr, NULL);
+		ether_addr_copy(mac_addr.addr.sa_data, mac);
+		err = dev_set_mac_address(endpoint, (void *)&mac_addr, NULL);
 		if (err)
 			return err;
 	}
@@ -188,10 +192,13 @@ static const struct net_device_ops msnic_netdev_ops = {
 struct net_device *msnic_alloc_netdev(struct msnic_pf *pf, struct pci_dev *pdev,
 				    int vf, bool representor)
 {
-	struct net_device *dev = alloc_etherdev(sizeof(struct msnic_net));
+	struct net_device *dev;
 	struct msnic_net *priv;
 	u8 mac[ETH_ALEN] = { 0x02, 0x6d, 0, 0, 0, 0 };
 
+	if (vf < -1 || vf >= MSNIC_MAX_VFS || (representor && vf < 0))
+		return NULL;
+	dev = alloc_etherdev(sizeof(struct msnic_net));
 	if (!dev)
 		return NULL;
 	priv = netdev_priv(dev);
@@ -215,7 +222,13 @@ struct net_device *msnic_alloc_netdev(struct msnic_pf *pf, struct pci_dev *pdev,
 	if (!representor)
 		SET_NETDEV_DEV(dev, &pdev->dev);
 	else {
+#ifdef NETIF_F_NETNS_LOCAL
 		dev->features |= NETIF_F_NETNS_LOCAL;
+#elif defined(MSNIC_HAVE_NETNS_IMMUTABLE)
+		dev->netns_immutable = true;
+#else
+		dev->netns_local = true;
+#endif
 	}
 	if (representor) {
 		snprintf(dev->name, IFNAMSIZ, "msnicr%d", vf);

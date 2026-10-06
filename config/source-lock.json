@@ -16,19 +16,19 @@
   "driver": {
     "compiled_source_sha256": "4b0ef9f0cbe3c044eba363b3c83a0f3d6f87042b9c5f632ec7a2fe7be4c4c1c9",
     "source_hash_method": "sorted handwritten driver/*.c, *.h and Makefile basename+NUL+contents+NUL; excludes generated *.mod.c",
-    "module_sha256": "198d28fe17afcd259c62eff281ce9244273020c9a83cb5ed3bdb78ef7edef498"
+    "module_sha256": "45425eb18787078e1936350a32a9ac65d63335699da17117de9058f78266c1d4",
+    "initial_module_sha256": "198d28fe17afcd259c62eff281ce9244273020c9a83cb5ed3bdb78ef7edef498",
+    "module_hash_note": "Latest worker setup replay; same handwritten source/kernel, new build directory. Original K00-K09 binary retained as initial_module_sha256."
   },
   "operator": {
     "revision": "a5588da21699fccce921cb1d4ac5894f47889399",
-    "patch": "patches/operator-systemd-ovs.patch",
-    "patch_sha256": "3366abe79d7b92bf514a877d1a0bbeef682451757cc02efdd06757093fe7815a"
+    "historical_patch_sha256": "3366abe79d7b92bf514a877d1a0bbeef682451757cc02efdd06757093fe7815a"
   },
   "ovs_cni": {
     "revision": "19262a0c9f304dc9cb04454afeed77e6ca77950b",
-    "patch": "patches/ovs-cni-vf-info.patch",
-    "patch_sha256": "b986332e3f9b791d3be847f7e662a466b1bb9ee2c3d080ea1db73a5e9431af92",
     "sriovnet": "v1.3.0",
-    "installed_binary_sha256": "66e9dc66b64607300d72e7bc7cf053cfb366cd85cffb2a94a45b2df9c87c7c87"
+    "installed_binary_sha256": "66e9dc66b64607300d72e7bc7cf053cfb366cd85cffb2a94a45b2df9c87c7c87",
+    "historical_patch_sha256": "b986332e3f9b791d3be847f7e662a466b1bb9ee2c3d080ea1db73a5e9431af92"
   },
   "ovs": {
     "version": "3.5.3",

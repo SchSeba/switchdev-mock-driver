@@ -1,8 +1,8 @@
 # 06 — Primary-source references and version notes
 
-Research refreshed 23 September 2026. The source links support the existing API
-contracts and infrastructure, **not a claim that the proposed mock driver exists**.
-The kernel and runtime package versions must be locked by the implementing agent.
+The references were collected for the original implementation. They describe API
+contracts and infrastructure; actual driver/runtime validation is recorded in
+IMPLEMENTATION-STATUS.md and config/source-lock.json.
 Documentation URLs and unpinned master URLs can change; record actual revisions.
 
 The operator default branch inspected resolves to
@@ -25,11 +25,11 @@ Contains native igb model handling and qemuextra/namespace/commandline generatio
 no new dummy_pcidevices option is required for the baseline.
 
 **[S03] QEMU emulated SR-IOV NIC and helpers.**
-[igb.c](https://github.com/qemu/qemu/blob/master/hw/net/igb.c),
-[PCIe SR-IOV helpers](https://github.com/qemu/qemu/blob/master/hw/pci/pcie_sriov.c),
-[pci-testdev.c](https://github.com/qemu/qemu/blob/master/hw/misc/pci-testdev.c).
+[igb.c](https://github.com/qemu/qemu/blob/v8.2.0/hw/net/igb.c),
+[PCIe SR-IOV helpers](https://github.com/qemu/qemu/blob/v8.2.0/hw/pci/pcie_sriov.c),
+[pci-testdev.c](https://github.com/qemu/qemu/blob/v8.2.0/hw/misc/pci-testdev.c).
 Inspect exact checkout for PF helper signatures, VF device ID/offset/stride/BARs.
-The proposal reuses PCI semantics, not the native igb networking engine.
+The driver reuses PCI semantics, not the native igb networking engine.
 
 **[S04] Linux SR-IOV core.**
 [PCI IOV howto](https://docs.kernel.org/PCI/pci-iov-howto.html) and
@@ -112,31 +112,10 @@ config-daemon node selector and supportedExtraNICs.
 
 **[S19] Additional implementation-time prerequisite reference.**
 [Multus CNI upstream](https://github.com/k8snetworkplumbingwg/multus-cni).
-Select and pin a deployment matching the target cluster. No particular Multus
-release or manifest was runtime validated for this package.
+Select and pin a deployment matching the target cluster. The exact validated Multus image digest is recorded in config/source-lock.json.
 
-## Version-lock template the agent must fill
+## Actual version record
 
-```json
-{
-  "operator_source": "a5588da21699fccce921cb1d4ac5894f47889399",
-  "qemu_version": "RECORD_FROM_HYPERVISOR",
-  "qemu_machine": "RECORD_EXACT_Q35_VERSION",
-  "guest_kernel": "RECORD_UNAME_R",
-  "kernel_config_sha256": "RECORD",
-  "driver_source_commit": "RECORD",
-  "driver_module_sha256": "RECORD",
-  "ovs_version": "RECORD",
-  "iproute2_version": "RECORD",
-  "kubernetes_version": "RECORD",
-  "operator_image_digest": "RECORD",
-  "daemon_image_digest": "RECORD",
-  "ovs_cni_image_digest": "RECORD",
-  "sriov_device_plugin_image_digest": "RECORD",
-  "multus_image_digest": "RECORD",
-  "workload_image_digest": "RECORD"
-}
-```
-
-The RECORD placeholders are intentionally not measurements. The implementing
-agent must replace them from the real lab before claiming reproducible results.
+See [config/source-lock.json](../config/source-lock.json) and the dated runtime
+evidence in [IMPLEMENTATION-STATUS.md](../IMPLEMENTATION-STATUS.md). These describe
+the validated lab, not a claim that other component versions work.

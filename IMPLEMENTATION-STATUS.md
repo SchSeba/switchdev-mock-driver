@@ -2,9 +2,9 @@
 
 ## Package delivery
 
-- Architecture and work packages: specified.
+- Architecture and driver: implemented; original K00–K09 plan completed.
 - VM and Kubernetes harness: implemented and replayed against the configured lab.
-- Local checks: 17 tests, one optional PyYAML skip; VALIDATION-REPORT.md is historical.
+- Local checks and runtime evidence: recorded below; commands in dated entries are historical.
 - Driver sources: PCI, devlink, slow path and TC engine implemented and tested.
 - Kernel module compilation: W=1 build passed on the exact guest kernel.
 - VM connection / exact PCI PF takeover: passed on virtual-worker-0.virtual.lab.
@@ -571,3 +571,316 @@ NOT TESTED. Their absence does not count as a runtime pass.
 README.md provides the demo entry point, CR-to-device-plugin flow and cleanup
 links. docs/05 gives the 50-cycle/failure/stress/CI replay and ordered cleanup.
 The final operator-managed pair is intentionally left available for inspection.
+
+## 2026-10-06 — First-push cleanup and worker installer
+
+Implemented and runtime passed: `scripts/setup-worker.sh` reuses the existing
+build/bind/persistence/recovery harness, installs missing OVS/build dependencies,
+and scopes binding and NetworkManager exclusion to an explicitly attested
+secondary PF. Setup leaves zero VFs/legacy/autoprobe enabled. The boot unit now
+checks the saved native PF MAC before rebinding and shares the live-interface
+safety guard. Restore removes only owned persistence and unchanged NM rules.
+No handwritten driver source changed: SHA-256 remains
+`4b0ef9f0cbe3c044eba363b3c83a0f3d6f87042b9c5f632ec7a2fe7be4c4c1c9`.
+
+Removed the obsolete handoff bundle, stale checksums/baseline validation report,
+duplicate static manifests, completed work-package plan, external patch/image
+builders and their obsolete renderer test. Kept driver, runtime checks and exact
+historical evidence; rewrote README/runbooks and added GPLv2 LICENSE. Moved 2.3 GB
+of ignored source/image/tool caches outside the project to
+`/var/tmp/mock-smartnic-build-cache-20261006`; 12 MB of runtime evidence remains in
+`artifacts/`. Site configs and credentials were preserved and remain ignored.
+Historical commands above may name removed tooling; they describe the original
+run rather than current installation instructions.
+
+Tested installer source: Git commit `93b98c6` (before the final documentation and
+version-record update), genuinely cloned from a local Git bundle because the
+repository's first remote push is still pending. Worker checkout:
+`/var/tmp/mock-worker-setup-src-20261006`. The actual W=1 build and module load ran
+on `virtual-worker-0.virtual.lab`, kernel `5.14.0-427.el9.x86_64`, OVS
+`openvswitch3.5-3.5.3-6.el9s.x86_64`. New installed module SHA-256:
+`45425eb18787078e1936350a32a9ac65d63335699da17117de9058f78266c1d4`.
+The byte hash differs from the original build because the build directory changed;
+the handwritten source hash is identical.
+
+The supplied API endpoint was temporarily unreachable from the controller.
+Read-only node checks succeeded through an authenticated SSH local forward to
+that same configured cluster, with a private kubeconfig copy and TLS server-name
+verification retained. The original kubeconfig was not modified. Subsequent lab
+commands used `LAB_CONFIG=/tmp/mock-worker-setup-lab.env` to select that copy.
+Hypervisor XML again confirmed two emulated igb interfaces and no hostdev; only
+MAC `52:54:00:c3:17:c1`, PF `0000:29:00.0`, belongs to the dedicated test network.
+
+| Exact command / action | Exit | Evidence |
+| --- | --- | --- |
+| `./scripts/ci.sh local` | 0 | worker-setup-local.log; 19 tests, one optional PyYAML skip |
+| `python3 ../sriov-network-operator/hack/test-virtual-mock-setup.py` | 0 | worker-setup-runner-checks.log; 3 checks for input, XML and new-boot ordering |
+| `bash -n ../sriov-network-operator/hack/run-e2e-conformance-virtual-cluster.sh` | 0 | syntax passed; no cluster recreation invoked |
+| `scripts/kube.sh cleanup`, bounded NodeState wait | 0 | worker-setup-cleanup.log; Succeeded, no owned interfaces/bridges |
+| `scripts/lab.sh unpersist`, `scripts/lab.sh restore` | 0 | worker-setup-unpersist-old.log, worker-setup-restore-old.log; native secondary PF recovered |
+| Worker `scripts/setup-worker.sh --pf 0000:15:00.0 --kernel 5.14.0-427.el9.x86_64 --emulated-pf` | 1, expected | worker-setup-runtime.log; eth1 has a global IP, refused before installation |
+| Worker `scripts/setup-worker.sh --pf 0000:29:00.0 --kernel 5.14.0-427.el9.x86_64 --emulated-pf` | 0 | worker-setup-runtime.log; actual build/bind, persisted, zero VFs/legacy |
+| Installed boot script with private test config pointing to management PF but saved test-PF MAC | 1, expected | worker-setup-restore-reinstall.log; MAC mismatch refused, live boot config unchanged |
+| Worker same setup command with `--restore`, then install again | 0 | worker-setup-restore-reinstall.log; native binding restored, owned files removed, reinstall passed |
+| `scripts/lab.sh vfs`, `scripts/lab.sh tc-smoke`, `scripts/lab.sh reset` | 0 | worker-setup-vfs.log, worker-setup-tc.log, worker-setup-reset.log; real VFs, TC in_hw/counters/ping, negative control, then zero VFs |
+| `tests/integration/reboot.sh` | 0 | worker-setup-reboot.log; actual new boot, module before kubelet, zero VFs/legacy |
+| `scripts/kube.sh apply`, `scripts/kube.sh verify` | 0 | worker-setup-kube-apply.log, worker-setup-kube-verify.log; operator/CNI independently recreated two Ready pods, ping/UDP, TC/OVS/engine evidence passed |
+
+Final boot ID `142a8e67-9bac-44d5-837c-15df6a03c6f1`. Management PF
+`0000:15:00.0` / MAC `52:54:00:13:e5:fe` / `eth1` stayed on native `igb`, with
+`192.168.124.128/24` and its original default route. No password or security
+setting was changed. Final owned demo PF has two real VFs/switchdev; pods
+`mock-ovs-a` and `mock-ovs-b` are Running/Ready, net1 `198.19.0.33` and `.34`.
+Bidirectional ICMP was 10/10, UDP 400/400 each direction; the evidence keepalive
+also completed 15000/15000. See worker-setup-final-state.log and artifacts/kubernetes/.
+
+Companion operator commit `2716a0d4c`, branch `add_mock_hwoffload_driver`, changes
+only the virtual conformance shell runner and its runnable Python checks. It
+accepts an HTTPS mock repo/full commit SHA/kernel pin, attests the dedicated NIC
+from XML, resolves its exact MAC, waits for a new boot, clones and invokes setup,
+and propagates DEV_MODE to the actual operator deployment. No operator Go or
+ovs-cni implementation was changed in this task. Review text is in the ignored
+`artifacts/operator-pr.md`.
+
+Not tested in this replay: full destructive cluster-recreation conformance runner,
+HTTPS clone before first publication, fresh package installation (OVS/tools/devel
+already existed; their original signed-package installation is recorded above),
+other kernels, immutable hosts, enforced signing, or a second DUT. The runner PR
+is prepared for that fresh test after the mock repository is pushed and its
+immutable revision and pinned-kernel guest image are supplied.
+
+
+## Fresh virtual operator conformance replay — 2026-10-06 (runtime passed)
+
+Recreated the authorized `virtual` Kubernetes cluster on `root@10.46.97.14`
+with the companion operator runner. Both workers cloned public mock revision
+`724d8984696f9124f777776e45d2108cec60c214`, built and persisted the module on
+`5.14.0-427.el9.x86_64`, and installed OVS `3.5.3-6.el9s`. No driver C source
+changed in this replay. Fresh module SHA256:
+`2bfd510468054e10e3d9a40fb4a563c74213c20334961b5af74cfe1823c4111e`.
+Kubernetes is `v1.34.2`; the test controller uses Go `1.26.8`, linux/arm64 and
+Ginkgo `2.32.0`; images were built with Go `1.26.5` for linux/amd64.
+
+Operator base `2716a0d4c9894428fa0cdeb233dd61a8f734315e` plus the companion
+working diff now recognizes the mock PF/VF in conformance discovery, excludes
+the management PF, renders OVS systemd arguments correctly, and removes empty
+bridge status through SSA. Readiness checks require current-generation status
+and ready config-daemon/device-plugin DaemonSets. Reboot checks require a new
+boot ID rather than a potentially absent `NodeReady=Unknown` transition.
+The fixed ovs-cni source is
+`fdd16b8ed495519ca79122d60b298743603dea4d`; its locally built image was deployed
+through Helm's OVS CNI override. Unsupported mock capabilities remain explicit
+skips; no software fallback is counted as IPv4 offload success.
+
+The complete requested suite exited 0: **37 passed, 0 failed, 27 skipped** in
+28m35s. Switchdev executed and passed inside that full run, with bidirectional
+5/5 ping, executed IPv4 redirects, native TC `in_hw` and OVS IPv4 offloaded
+packet counters 79/79. A separate focused run also passed on worker 1.
+
+Retained evidence is under `artifacts/conformance-20261006/`; `RUN.md` records
+commands, failures and retries. `conformance-retry3/unit_report.xml` is the
+complete passing report. Operator diff SHA256:
+`55120bf1c082f02bfe576c52cfd6c77f176042cfdef4a58ae2313c0dc113304b`.
+Deployment copies remain under `/var/tmp/sriov-mock-conformance-20261006/`
+on the hypervisor. Retained provisioning logs redact bootstrap tokens;
+credentials, keys and kubeconfigs are excluded.
+
+| Command/action | Exit | Result/artifact |
+| --- | --- | --- |
+| Runner with `SKIP_DELETE=TRUE SKIP_TEST=TRUE MOCK_SMARTNIC_REPO=https://github.com/SchSeba/switchdev-mock-driver.git MOCK_SMARTNIC_REF=724d8984696f9124f777776e45d2108cec60c214 MOCK_SMARTNIC_KERNEL=5.14.0-427.el9.x86_64 CLUSTER_TYPE=kubernetes LOCAL_OVS_CNI_IMAGE=localhost/ovs-cni:mock-switchdev-20261006` | 2 initially | Cluster recreated and both installations passed; initial image build lacked copied Git metadata (`cluster-recreate.log`). |
+| Restore source Git metadata and resume unchanged deployment tail | 0 | Fresh operator/daemon/webhook and fixed CNI deployed; validation 6/6 passed (`resume-deploy.log`). |
+| Worker installer targeting management PF `0000:15:00.0` | 1, expected | Rejected before changes (`primary-guard.log`). |
+| `GOARCH=arm64 GOOS=linux go test ./pkg/utils ./pkg/host/internal/service ./pkg/plugins/k8s ./test/util/cluster` | 0 | `unit.log`; later readiness regression also passed (`readiness-unit.log`). |
+| `KUBEBUILDER_ASSETS=/tmp/k8s/1.35.0-linux-arm64 go test ./pkg/daemon` | 0 | `daemon-unit.log`; actual last-bridge-removal regression passed, and fails without its fix (`daemon-bridge-regression.log`, `daemon-bridge-regression-red.log`). |
+| Focused conformance `bin/ginkgo --focus=Switchdev --timeout=45m ... ./test/conformance` with requested Kubernetes/emulated-PF environment | 0 on retry2 | Bidirectional 5/5 ping, executed IPv4 redirects, native TC `in_hw`, OVS offloaded flows with packet counters, and cleanup all passed (`switchdev-retry2.log`, JUnit). |
+| Focused `--focus='Daemon reset with shutdown'` with requested environment | 0 | New boot ID, Ready and host-file cleanup passed (`reboot-reset.log`, JUnit). |
+| Focused `--focus=Switchdev` with `SRIOV_NODE_AND_DEVICE_NAME_FILTER=virtual-worker-1.virtual.lab:msnicp0` | 0 | Worker 1 also passed bidirectional 5/5 ping, executed IPv4 redirects, native TC `in_hw`, OVS IPv4 offloaded packets 77/78 and cleanup (`switchdev-worker1.log`, JUnit, Running/Ready pod snapshot). |
+| `make lint` | 0 | Zero issues (`lint-final.log`). |
+| Requested `SUITE=./test/conformance hack/run-e2e-conformance.sh` with `OPERATOR_NAMESPACE=sriov-network-operator KUBECONFIG=/home/vscode/kubeconfig/virt-cluster-k8s GOARCH=arm64 GOOS=linux CLUSTER_TYPE=kubernetes CLUSTER_HAS_EMULATED_PF=TRUE` | 0 | 37 passed, 0 failed, 27 skipped; switchdev and reboot/reset passed (`conformance-retry3.log`, JUnit). Earlier partial runs diagnosed rollout/admission and transient reboot-condition assumptions. |
+| Final read-only API, worker binding and libvirt XML checks | 0 | Both workers Ready/schedulable, NodeStates Succeeded/current-generation; test resources removed, webhook/injector restored; native primary PFs unchanged; mock PFs legacy/zero VFs/empty engine flows (`final-*.json`, `final-worker-bindings.txt`, `hypervisor-attestation.json`). |
+
+The supplied kubeconfig was refreshed for the recreated cluster. API TLS
+verification is retained through an authenticated SSH local forward. VM host
+keys were attested by read-only libguestfs reads from the explicitly named VM
+disks. Initial kcli provisioning had implicitly disabled SSH host-key checking;
+a scoped native SSH wrapper now forces verification for all subsequent calls.
+No password or guest security mode was changed. A live conformance check shows
+management PF `0000:15:00.0` / `eth1` still on native `igb`, zero VFs, with its
+default route intact on both workers (`primary-both-during-conformance.txt`).
+Final worker checks confirm the same primary driver, zero VFs and default
+gateway/interface after all reboots. Both mock modules retain the recorded
+SHA256; OVS `hw-offload=true` remains configured for subsequent tests.
+
+Not tested here: GitHub Actions execution, other kernels, immutable or
+enforced-signing hosts, physical hardware acceleration, or unsupported mock
+capabilities. The 27 skips include absent platforms/devices/services and
+explicit mock limits; switchdev was not skipped. The opt-in CI runner still
+requires the documented pinned-kernel image and fixed ovs-cni image.
+
+## 2026-10-06: native conformance beside the third mock PF
+
+Implemented: the worker binding harness now uses owned
+`softdep igbvf pre: mock_smartnic` instead of blocking native igbvf. The exact-PF
+mock probe rejects other PFs' VFs. Initial binding still refuses to unload an
+igbvf driver with unrelated users; boot MAC/usage checks remain before loading
+and binding. README/architecture and reboot/local safety checks were updated.
+The operator runner adds a third emulated igb NIC on the same test network,
+attests the two configured test MACs, names the native secondary `sriovtest0`,
+and filters regular tests to it. Only emulated switchdev selection chooses
+`mock_smartnic_pf`; the trust, VLAN/QoS, IPv6 and jumbo mock-specific skips are gone.
+The existing primary checksum workaround resolves the default-route interface,
+since adding a PCI NIC changed kernel interface enumeration. Its driver is igb.
+
+Built: both workers built the e5f680ae3f1a745f580383ef832b9659096f4d39 C sources
+with the local binding-script overlay on kernel 5.14.0-427.el9.x86_64. Module
+SHA256 c03d917f27938821ec9fc806531563150a826ebf4c974b9d1d61000dea972ae1.
+This installer change is not yet published; the runner refuses old blocking
+installers. No C-driver or ovs-cni source changes were needed for this follow-up.
+
+Runtime passed: actual libvirt MAC/model/no-passthrough attestation on both named
+workers; worker0 reboot with native name and exact third-PF binding before kubelet;
+23 guest IOMMU groups per worker; native VFIO allocation/partitioning and native
+jumbo frames. Full-suite switchdev passed on PCI 0000:2a:00.0 with native igbvf
+loaded: seven mock VFs, two Running/Ready allocated pods, bidirectional 5/5 ping,
+increasing directional IPv4 engine hits, kernel TC in_hw and OVS offloaded IPv4
+packet counters 68/68. All seven secondary VFs were separately observed using
+igbvf while the management PF retained zero VFs.
+
+Local passed (exit 0): `./scripts/ci.sh local` (20 checks, one optional PyYAML
+skip); operator `python3 hack/test-virtual-mock-setup.py` (five checks),
+`go test ./test/util/cluster`, conformance package compilation,
+`bash -n hack/run-e2e-conformance-virtual-cluster.sh`, and `make lint` (zero issues).
+
+Full conformance passed: exit 0, **47 passed / 0 failed / 17 skipped**,
+39m27s, including switchdev, trust, VLAN/QoS, IPv6 ping, jumbo traffic and
+reboot cleanup. No focus/skip filters were used. Exact
+commands, installation logs, binding snapshots and reports are retained in
+`artifacts/three-nic-20261006/RUN.md` and its sibling files. The authorized
+virtual cluster alone was modified; no passwords or SSH verification settings
+were changed. Native management MACs, addresses, routes and PF drivers were
+preserved; its netdev name changed from eth1 to eth2 after PCI enumeration.
+
+Worker1 reboot also passed (new BootID and Ready required before verification):
+the stable native name and all three PF roles survived; mock binding became
+active at 7.18 seconds, before kubelet at 70.45 seconds. With native igbvf
+explicitly loaded, a focused switchdev run selected worker1 through
+`NODES_SELECTOR=kubernetes.io/hostname=virtual-worker-1.virtual.lab` and passed:
+exit 0, one executed test, bidirectional 5/5 ping, increasing IPv4 engine hits,
+both TC representors in_hw, and OVS offloaded IPv4 packet counters 73/73.
+The other 63 specs were excluded by this focused run, not capability skips.
+
+Final read-only verification passed on both workers: Ready/schedulable nodes,
+Succeeded/current-generation clean NodeStates, native management and secondary
+drivers retained, mock PF legacy/zero VFs/empty flows, and no test policies,
+pools, OVS networks or pods. Injector/webhook stayed enabled and the bridge
+feature gate was restored. See `artifacts/three-nic-20261006/final-*.json`,
+`worker*-final-verified.txt`, and `switchdev-worker1.log`.
+
+## 2026-10-06: shared switchdev conformance flow
+
+Implemented: `FindSwitchdevDevicesAndNode` reuses the shared unused-device
+check before filtering `mlx5_core`, `ice` and `mock_smartnic_pf`. Default routes
+in both IP families and OVS ports are excluded. Regular conformance keeps its
+native device filter; switchdev respects the discovered node selector. The
+test now requests exactly **five VFs**, with no advertised-capacity check, and
+uses the same pool/policy/managed-bridge/two-pod flow for all supported drivers.
+Mock conditionals and debugfs reads were removed from this operator test;
+allocated PCI VFs map to real devlink representors, and standard TC/OVS counters
+are matched to the selected VF pair's MACs and redirect ports.
+
+The focused run also exposed first-time native igbvf registration claiming
+temporarily unbound mock VFs. Persistence/boot now preloads igbvf with zero mock
+VFs after mock registration; initial native-user refusal and boot MAC/usage
+guards remain. Both owned worker boot scripts were updated. The runner rejects
+installers missing either softdep or native preload. No kernel C sources or
+operator production Go sources changed in this follow-up. Module SHA256 remains
+c03d917f27938821ec9fc806531563150a826ebf4c974b9d1d61000dea972ae1 on kernel
+5.14.0-427.el9.x86_64; worker guest script SHA256 is
+4ea722fa8ffe1ecf76b4f3880685d36584466e74c473707ac792e618eb5f8140.
+
+Runtime passed: final focused switchdev command exit 0, **1 passed / 0 failed**,
+158.783 seconds; the other 63 specs were excluded by focus. Worker1 had five
+mock VFs alongside live native igbvf, two Running/Ready pods, bidirectional
+5/5 ping, OVS IPv4 packet counts increasing 0→4 and 4→9, and matching TC in_hw
+redirect hardware counters 32/46. No full-suite rerun was requested or performed.
+Both workers subsequently passed exact-PF/primary/native binding verification,
+legacy/zero-VF/empty-flow cleanup, Ready/schedulable and current-generation
+NodeState checks. Injector/webhook remained enabled; the bridge gate was restored.
+
+Local passed: `go test ./test/util/cluster ./test/util/network` (10 checks),
+`make lint` (zero issues), runner syntax/Python checks (five checks), and
+`./scripts/ci.sh local` (20 checks, one optional PyYAML skip), all exit 0.
+An existing network utility error-message argument order was corrected to make
+its existing regression pass. The initial eight-VF and native-autoload attempts
+were interrupted by the agent after diagnosis and are retained as failures;
+the final five-VF result supersedes them. A cold-load check's `modprobe -r igbvf`
+also removed its mock soft dependency; the owned zero-VF binding was restored
+and the cold native registration path verified before the final run.
+
+Exact commands, source pins and artifacts: `artifacts/shared-switchdev-20261006/RUN.md`.
+Not tested yet: the unchanged shared flow on real OpenShift/Mellanox hardware,
+a new reboot with the preload change, or GitHub Actions. Publish the updated
+mock installer and pin its new SHA before using a fresh public clone.
+
+## 2026-10-06 — Running-kernel builds without a fixed release
+
+At the user's request, the in-progress fresh-cluster deployment was stopped
+(exit 143) before mock setup/operator deployment. No suite result is claimed
+for that interrupted attempt. Setup now defaults to `uname -r`, installs matching
+headers and checks the build tree's release. The optional `--kernel` assertion
+is retained for existing callers; the operator runner no longer supplies or
+requires a kernel pin. Workers clone `main`, log its SHA, and no longer inspect
+installer text with greps. `DEV_MODE=TRUE` remains enabled.
+
+Implemented portability changes: detect the target headers' `netns_immutable`
+field instead of relying on release numbers, retain the old NETNS_LOCAL and
+netns_local forms, and use a storage-sized MAC address buffer for old/new
+dev_set_mac_address argument types. VF-index validation removes newer GCC's
+format-truncation warning. Boot checks module vermagic before rebinding;
+another kernel still requires a module compiled for that kernel.
+
+Baseline mock source: public main `c323b3a011228eb4c348438de1d9e9dfa2402986`
+plus the working changes. Final `driver/netdev.c` SHA256:
+`fa696185d02461762b2db9a34cb68274ffcd2c5731963db455dda67239d570da`;
+`driver/Makefile`: `4db28e2d58dc82732e77820e5b796f0092fc67c9c60a0355bf357fefc5f6e448`.
+
+Built with `make -C HEADERS M=DRIVER W=1 -j2 modules` in isolated builders:
+
+| Target headers | Build | Runtime |
+| --- | --- | --- |
+| CentOS Stream 9 `5.14.0-754.el9.x86_64` | exit 0 via setup-worker.sh | passed below |
+| CentOS Stream 10 `6.12.0-273.el10.x86_64` | exit 0 | not tested |
+| Fedora 44 `7.2.8-200.fc44.x86_64` | exit 0 | not tested |
+
+The two container builds skip BTF because vmlinux is absent; Fedora also reports
+the missing builder pahole version. No C compiler warnings remain. Initial
+compile failures exposed the netns-field and MAC-argument API changes and are
+superseded by the final successful builds.
+
+Runtime on the explicitly authorized virtual-worker-0: installed the current
+signed CentOS kernel/devel packages and rebooted to `5.14.0-754.el9.x86_64`.
+Ran `sudo --preserve-env=SSH_CONNECTION ./scripts/setup-worker.sh
+--pf 0000:2a:00.0 --emulated-pf`, exit 0, with no kernel argument. The management
+PF `0000:15:00.0` and native secondary `0000:29:00.0` remain igb/zero VFs; only
+the XML/MAC-attested third PF uses mock_smartnic_pf. Final module SHA256:
+`cd452983cf2f40962e74d40babf3037c4e626fb5c9e1ae85259425a7ba7c6d60`.
+
+All exit 0: `tests/integration/pci-lifecycle.sh`,
+`tests/integration/devlink-lifecycle.sh`, `scripts/lab.sh vfs`,
+`tests/integration/vf-netlink.sh`, `tests/integration/flower-engine.sh`,
+`scripts/lab.sh tc-smoke`, `tests/integration/ovs-offload.sh`,
+`scripts/lab.sh reset`, and `tests/integration/reboot.sh`. Tests prove actual
+VF lifetimes/default rebind, namespace return, MAC updates, TC rejection/stats,
+OVS in_hw execution/traffic and isolation after rule removal. A helper initially
+built against the operator's older netlink dependency failed its VF-info
+assertion; rebuilding that helper in the documented ovs-cni checkout fixed it.
+
+Reboot changed ID, retained the kernel-matched mock module and native igbvf,
+returned legacy/zero-VF/empty-flow state, started binding before kubelet,
+and returned the node Ready/schedulable. `scripts/ci.sh local`: exit 0,
+22 checks with one optional PyYAML skip. Operator runner Python safety checks:
+exit 0, five checks; shell syntax and git diff checks: exit 0.
+
+Artifacts/commands: `artifacts/main-cluster-e2e-20261006/`. Full fresh-cluster
+conformance is pending publication of these changes to main and redeployment;
+no general-kernel full-suite pass or runtime pass on 6.12/7.2 is claimed yet.

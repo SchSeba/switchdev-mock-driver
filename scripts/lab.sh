@@ -10,8 +10,9 @@ case "$ACTION" in
 esac
 mkdir -p "$ROOT/artifacts"
 RSH="ssh -o BatchMode=yes -o StrictHostKeyChecking=yes -o ConnectTimeout=10"
-remote mkdir -p "$REMOTE_DIR/harness" "$REMOTE_DIR/src"
+remote mkdir -p "$REMOTE_DIR/harness/lib" "$REMOTE_DIR/src"
 rsync -a --timeout=60 -e "$RSH" "$ROOT/scripts/guest.sh" "$ROOT/scripts/tc-smoke.sh" "$SSH_TARGET:$REMOTE_DIR/harness/"
+rsync -a --timeout=60 -e "$RSH" "$ROOT/scripts/lib/pf-guard.sh" "$SSH_TARGET:$REMOTE_DIR/harness/lib/"
 # Transfer only non-secret lab configuration; no kubeconfig or SSH credentials.
 CFG=$(mktemp)
 trap 'rm -f "$CFG"' EXIT

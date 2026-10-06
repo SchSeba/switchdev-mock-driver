@@ -36,7 +36,8 @@ bdf=$1; kernel=$2; p=/sys/bus/pci/devices/$bdf
 [[ $(uname -r) == "$kernel" ]]
 [[ $(basename "$(readlink -f "$p/driver")") == mock_smartnic_pf ]]
 [[ $(cat "$p/sriov_numvfs") == 0 && $(cat "$p/sriov_drivers_autoprobe") == 1 ]]
-[[ ! -e /sys/module/igbvf && -d /sys/bus/pci/drivers/mock_smartnic_vf ]]
+[[ -d /sys/bus/pci/drivers/mock_smartnic_vf && -d /sys/module/igbvf ]]
+modprobe -c | grep -Fx "softdep igbvf pre: mock_smartnic"
 systemctl is-active --quiet mock-smartnic-lab.service
 systemctl is-active --quiet kubelet.service
 module_time=$(systemctl show mock-smartnic-lab.service -p ActiveEnterTimestampMonotonic --value)
@@ -51,4 +52,4 @@ systemctl show kubelet.service -p Requires -p After
 SH
 k wait --for=condition=Ready "node/$NODE_NAME" --timeout=180s
 [[ $old_cordon == true ]] || k uncordon "$NODE_NAME"
-printf 'PASS: boot changed %s -> %s; pinned kernel, persistent PF, zero VFs, default VF driver and kubelet ordering.\n' "$old_boot" "$new_boot"
+printf 'PASS: boot changed %s -> %s; kernel-matched module, persistent PF, zero VFs, default VF driver and kubelet ordering.\n' "$old_boot" "$new_boot"

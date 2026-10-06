@@ -34,24 +34,8 @@ mutation() {
   require systemd-detect-virt
   case "$(systemd-detect-virt --vm || true)" in qemu|kvm) ;; *) fail 'This harness only mutates an attested QEMU/KVM guest.';; esac
 }
-not_used() {
-  local dev=$1
-  [[ ! -L /sys/class/net/$dev/master ]] || fail "$dev belongs to a bridge/bond/VRF."
-  ! compgen -G "/sys/class/net/$dev/upper_*" >/dev/null || fail "$dev has an upper device."
-  [[ -z $(ip -o addr show dev "$dev" scope global) ]] || fail "$dev has a global IP address."
-  [[ -z $(ip route show default dev "$dev") && -z $(ip -6 route show default dev "$dev") ]] || fail "$dev carries a default route."
-  if [[ -n $SSH_PEER ]]; then
-    local route
-    route=$(ip route get "$SSH_PEER" 2>/dev/null || ip -6 route get "$SSH_PEER" 2>/dev/null || true)
-    [[ " $route " != *" dev $dev "* ]] || fail "$dev carries the SSH connection."
-  fi
-  if command -v ovs-vsctl >/dev/null; then
-    local br
-    ovs-vsctl --timeout=3 show >/dev/null 2>&1 || fail "Cannot verify OVS ownership of $dev: OVSDB is unavailable."
-    br=$(ovs-vsctl --timeout=3 iface-to-br "$dev" 2>/dev/null || true)
-    [[ -z $br ]] || fail "$dev belongs to OVS bridge $br. Clean up its owner first."
-  fi
-}
+source "$HERE/lib/pf-guard.sh"
+
 reps() {
   devlink -j port show | jq -r --arg p "pci/$PF_BDF/" '
     (.port // {}) | to_entries[] | select(.key|startswith($p)) |
@@ -74,6 +58,7 @@ case "$ACTION" in
   build)
     require make; require gcc
     [[ -d /lib/modules/$(uname -r)/build ]] || fail 'Install headers/devel for the RUNNING kernel, not merely the newest kernel.'
+    [[ $(make -s -C "/lib/modules/$(uname -r)/build" kernelrelease) == "$(uname -r)" ]] || fail 'Kernel build tree does not match the running release.'
     [[ -f $SOURCE_DIR/driver/Makefile ]] || fail 'Implement driver/Makefile before building.'
     jobs=$(getconf _NPROCESSORS_ONLN); ((jobs <= 8)) || jobs=8
     make -C "/lib/modules/$(uname -r)/build" M="$SOURCE_DIR/driver" clean
@@ -123,10 +108,11 @@ case "$ACTION" in
       printf 'ORIGINAL_OVERRIDE=%q\n' "$(cat "$P/driver_override")"
       printf 'ORIGINAL_AUTOPROBE=%q\n' "$(cat "$P/sriov_drivers_autoprobe")"
       printf 'ORIGINAL_IFNAME=%q\n' "$dev"
+      printf 'ORIGINAL_MAC=%q\n' "$(cat "/sys/class/net/$dev/address")"
       printf 'ORIGINAL_ADMIN_UP=%q\n' "$(ip -j link show "$dev" | jq -r '.[0].flags|index("UP") != null')"
     } > "$STATE/original.env"
-    # Lab-only temporary native-VF suppression. Remove during restore.
-    printf '# mock-smartnic-lab owned\nblacklist igbvf\ninstall igbvf /bin/false\n' > "$block"
+    # Register the exact-PF mock VF driver before native igbvf. Remove during restore.
+    printf '# mock-smartnic-lab owned\nsoftdep igbvf pre: mock_smartnic\n' > "$block"
     modprobe sch_ingress; modprobe cls_flower; modprobe act_mirred
     insmod "$MODULE_FILE" target_pf="$PF_BDF" allow_igb_emulation=1
     printf '%s\n' "$PF_DRIVER" > "$P/driver_override"
@@ -191,29 +177,40 @@ case "$ACTION" in
     [[ ! -e /etc/systemd/system/mock-smartnic-lab.service ]] || fail 'Persistence already exists; unpersist before replacing it.'
     [[ ! -e /run/ostree-booted ]] || fail 'Use the documented kernel-matched module image/KMM path on immutable nodes.'
     install -d /usr/local/libexec/mock-smartnic-lab /etc/mock-smartnic-lab "/lib/modules/$(uname -r)/extra"
+    install -m 0644 "$HERE/lib/pf-guard.sh" /usr/local/libexec/mock-smartnic-lab/pf-guard.sh
     install -m 0644 "$MODULE_FILE" "/lib/modules/$(uname -r)/extra/mock_smartnic.ko"
     printf '%s\n' "$(uname -r)" > "$STATE/installed-kernel"
     printf 'options mock_smartnic target_pf=%s allow_igb_emulation=1\n' "$PF_BDF" > /etc/modprobe.d/mock-smartnic-lab.conf
-    printf 'PF_BDF=%q\n' "$PF_BDF" > /etc/mock-smartnic-lab/boot.env
+    source "$STATE/original.env"
+    printf 'PF_BDF=%q\nORIGINAL_MAC=%q\n' "$PF_BDF" "$ORIGINAL_MAC" > /etc/mock-smartnic-lab/boot.env
     cat > /usr/local/libexec/mock-smartnic-lab/boot-bind <<'BOOT'
 #!/usr/bin/env bash
 set -Eeuo pipefail
 source /etc/mock-smartnic-lab/boot.env
+fail() { echo "ERROR: $*" >&2; exit 1; }
+source /usr/local/libexec/mock-smartnic-lab/pf-guard.sh
 P=/sys/bus/pci/devices/$PF_BDF
 [[ $(cat "$P/vendor") == 0x8086 && $(cat "$P/device") == 0x10c9 ]]
 case "$(systemd-detect-virt --vm)" in qemu|kvm) ;; *) exit 1;; esac
 [[ $(cat "$P/sriov_numvfs") == 0 ]]
-# A built-in/early-bound native VF driver is not an acceptable test configuration.
-[[ ! -e /sys/module/igbvf ]]
-modprobe sch_ingress; modprobe cls_flower; modprobe act_mirred
-modprobe mock_smartnic
+[[ $(modinfo -F vermagic mock_smartnic) == "$(uname -r) "* ]] || fail 'Rebuild and install mock_smartnic for the running kernel before boot binding.'
+# Native igbvf may coexist; its soft dependency registers mock VF probing first.
 if [[ -L $P/driver && $(basename "$(readlink -f "$P/driver")") == mock_smartnic_pf ]]; then
+  modprobe igbvf
   printf '1\n' > "$P/sriov_drivers_autoprobe"
   exit 0
 fi
+[[ -L $P/driver && $(basename "$(readlink -f "$P/driver")") == igb ]] || fail 'Expected native igb before boot bind.'
+mapfile -t names < <(find "$P/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
+((${#names[@]} == 1)) || fail 'Expected one PF netdev before boot bind.'
+[[ $(cat "/sys/class/net/${names[0]}/address") == "$ORIGINAL_MAC" ]] || fail 'PF MAC changed since attestation; refusing boot bind.'
+not_used "${names[0]}" boot
+modprobe sch_ingress; modprobe cls_flower; modprobe act_mirred
+modprobe mock_smartnic
 printf 'mock_smartnic_pf\n' > "$P/driver_override"
 [[ ! -L $P/driver ]] || printf '%s\n' "$PF_BDF" > "$P/driver/unbind"
 printf '%s\n' "$PF_BDF" > /sys/bus/pci/drivers/mock_smartnic_pf/bind
+modprobe igbvf
 printf '1\n' > "$P/sriov_drivers_autoprobe"
 BOOT
     chmod 0755 /usr/local/libexec/mock-smartnic-lab/boot-bind
@@ -237,17 +234,20 @@ Requires=mock-smartnic-lab.service
 After=mock-smartnic-lab.service
 UNIT
     depmod -a
+    # Register native probing now, while the mock PF has zero VFs. First-time
+    # igbvf registration during operator VF unbind/rebind could claim them.
+    modprobe igbvf
     systemctl daemon-reload
     systemctl enable mock-smartnic-lab.service
     touch "$STATE/persisted"
-    printf 'Persistence installed for this kernel only. No reboot was performed.\n'
+    printf 'Persistence installed for the running kernel. Rebuild before booting another kernel. No reboot was performed.\n'
     ;;
   unpersist)
     mutation
     [[ ${PERSISTENCE_ACK:-} == YES && -e $STATE/persisted ]] || fail 'No owned persistence state, or PERSISTENCE_ACK missing.'
-    systemctl disable mock-smartnic-lab.service
+    systemctl disable --now mock-smartnic-lab.service
     rm -f /etc/systemd/system/mock-smartnic-lab.service /etc/systemd/system/kubelet.service.d/30-mock-smartnic-lab.conf
-    rm -f /etc/modprobe.d/mock-smartnic-lab.conf /usr/local/libexec/mock-smartnic-lab/boot-bind /etc/mock-smartnic-lab/boot.env
+    rm -f /etc/modprobe.d/mock-smartnic-lab.conf /usr/local/libexec/mock-smartnic-lab/boot-bind /usr/local/libexec/mock-smartnic-lab/pf-guard.sh /etc/mock-smartnic-lab/boot.env
     ver=$(cat "$STATE/installed-kernel")
     [[ $ver =~ ^[a-zA-Z0-9_.+-]+$ ]] || fail 'Invalid recorded kernel version.'
     rm -f "/lib/modules/$ver/extra/mock_smartnic.ko"

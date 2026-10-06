@@ -1,13 +1,13 @@
 # 01 — Architecture, contracts and scope
 
-## 1. Chosen design and what is still hypothetical
+## 1. Implemented design
 
 Use QEMU's existing `igb` PCI PF/VF model as a **PCI carrier**, not its native
 network datapath. Bind custom guest PF and VF drivers. Linux sees genuine emulated
 PCI functions; packets are switched in guest kernel memory. QEMU already exposes
 SR-IOV in this device model, and upstream operator/kcli virtual test infrastructure
-uses it. The combination with these custom drivers is a design proposal until
-K02 proves it. [S01, S02, S03]
+uses it. The pinned lab passed PCI VF creation and the complete operator/CNI flow;
+see IMPLEMENTATION-STATUS.md for the actual tests. [S01, S02, S03]
 
 An unchanged `pci-testdev` lacks the needed SR-IOV device model. Adding a driver
 `sriov_configure` callback cannot manufacture it. Do not create imitation PCI
@@ -24,11 +24,11 @@ the driver's truthful PCI/netlink/devlink behavior are the compatibility targets
 
 ## 2. Devices and topology
 
-Single PF, two VFs initially. More VFs are a later repeat of the same contracts.
+Single PF, two VFs initially. The module supports up to seven VFs; two is the validated pod topology.
 
 ```text
 QEMU/KVM VM
-  management virtio NIC -------- SSH, Kubernetes control traffic (untouched)
+  management NIC -------- SSH, Kubernetes control traffic (untouched)
   emulated igb PCI PF ---------- mock_smartnic_pf
       virtfn0 PCI VF ----------- mock_smartnic_vf -> VF0 netdev -> pod A/net1
       virtfn1 PCI VF ----------- mock_smartnic_vf -> VF1 netdev -> pod B/net1
@@ -72,7 +72,7 @@ netif_rx(skb)` has the wrong direction for an offloaded redirect. [S06]
 
 Make a small `msnic_deliver_endpoint()` abstraction that handles RX preparation,
 namespace metadata, Ethernet protocol/header normalization and ownership. Study
-`veth`/`netdevsim` handoff helpers in the **pinned kernel** rather than hand-waving
+`veth`/`netdevsim` handoff helpers in the **target kernel** rather than hand-waving
 away checksum/header state. Document whether the skb arrives before or after
 `eth_type_trans()` at each function boundary. Never double-pull the L2 header.
 
@@ -124,17 +124,20 @@ Use `pci_iov_vf_id()` where supported; do not derive VF index by subtracting BDF
 The igb model's VF routing offset/stride is not necessarily contiguous. [S03,S04]
 
 The initial manual test sets `sriov_drivers_autoprobe=0`, then binds VFs explicitly.
-The operator lane needs `sriov_drivers_autoprobe=1`, the mock VF driver already
-registered and native `igbvf` absent/blocked in this dedicated VM. Otherwise the
-native VF driver can win and talk to a mock PF that lacks its mailbox protocol.
-Do not rely only on a per-VF `driver_override`: the operator's default-driver
-binding helper clears it when probing an unbound VF. Test that exact rebind path.
-[S04, S09]
+The operator lane needs `sriov_drivers_autoprobe=1` and the mock VF driver
+registered before native `igbvf`. The harness installs a reversible, lab-owned
+`softdep igbvf pre: mock_smartnic` with the exact-PF module options. The mock probe
+rejects VFs outside that PF, allowing a separate native igb test PF and its
+igbvf endpoints on the same guest. Native igbvf must be modular: initial binding
+refuses to displace unrelated bound native VFs or unload a built-in module.
+Persistence and boot register igbvf while the mock PF has zero VFs. A soft
+dependency alone does not prevent first-time igbvf registration from claiming
+temporarily unbound mock VFs during operator reconciliation.
 
-The harness uses a reversible, lab-owned blacklist/install override for `igbvf`
-and refuses to displace unrelated bound native VFs. If `igbvf` is built in, select
-a test kernel with it modular/disabled or move to the distinct-ID QEMU fallback.
-Do not blacklist unrelated Intel drivers system-wide on a real host.
+Do not rely only on a per-VF `driver_override`: the operator's default-driver
+binding helper clears it when probing an unbound VF. Validate simultaneous native
+and mock VF creation, that exact rebind path, and reboot ordering. Do not blacklist
+unrelated Intel drivers system-wide on a real host. [S04, S09]
 
 ## 6. Public feature boundary
 
@@ -169,6 +172,9 @@ Develop against the **running guest kernel** and its matching headers. Record
 QEMU, machine type, kernel package/config, OVS, iproute2, operator source and
 component image digests. Use one initial mutable Linux worker with an independent
 control plane; a distro name alone does not pin the kernel ABI.
+The installer has no fixed-release requirement: build against the running kernel's
+matching devel/headers, validate its APIs, and record the release with the results.
+Kernel upgrades require a fresh module build; boot refuses mismatched binaries.
 
 The researched operator commit is
 `a5588da21699fccce921cb1d4ac5894f47889399`. Its Kubernetes service integration checks
