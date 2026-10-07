@@ -4,6 +4,7 @@
 
 - Architecture and driver: implemented; original K00–K09 plan completed.
 - VM and Kubernetes harness: implemented and replayed against the configured lab.
+- Operator virtual OpenShift mock-driver delivery: implemented with Driver Toolkit and a worker MachineConfig; runtime not tested.
 - Local checks and runtime evidence: recorded below; commands in dated entries are historical.
 - Driver sources: PCI, devlink, slow path and TC engine implemented and tested.
 - Kernel module compilation: W=1 build passed on the exact guest kernel.
@@ -24,7 +25,7 @@
 | K06 direct TC and standalone OVS | yes | n/a | yes | tc-smoke-k06-attempt1.log, ovs-offload-k06-attempt1.log |
 | K07 reboot-safe deployment | yes | yes | yes | devlink-lifecycle-k07.log, persist-unit-k07.log, reboot-k07-attempt1.log; signing/other kernels not tested |
 | K08 operator full flow | yes | yes | yes | kube-apply-k08-attempt3.log, kube-verify-k08-attempt2.log, k08-verdict-with-icmp.log |
-| K09 resilience and CI | yes | checks pass | yes | 50 pod cycles, allocation recovery, kernel stress/reload/reboot; local/VM/Kubernetes CI passed; optional OpenShift/debug/signing untested |
+| K09 resilience and CI | yes | checks pass | yes | 50 pod cycles, allocation recovery, kernel stress/reload/reboot; local/VM/Kubernetes CI passed; mock-driver OpenShift/debug/signing lanes untested |
 
 Append a dated entry per attempt with source SHA, running kernel, commands,
 exit codes, evidence paths, and next action. Never replace unknown with pass.
@@ -564,9 +565,12 @@ worker. The CPU mock engine is Linux driver offload, not physical acceleration;
 the uplink is an explicit sink with no external wire. Rules are capped at 256.
 VLAN actions/tagged predicates, stateful/CT, tunnels, IPv6 address and ARP-specific
 matches, shared blocks, nonzero chains and unsupported masks/actions/stats remain
-explicit failures. Basic Ethernet ARP forwarding is supported. OpenShift/MCO,
-enforced signing, other kernels, KASAN/lockdep and online GitHub execution remain
-NOT TESTED. Their absence does not count as a runtime pass.
+explicit failures. Basic Ethernet ARP forwarding is supported. The operator
+virtual OpenShift mock-driver path is implemented, but its runtime, enforced
+signing, other kernels, KASAN/lockdep and online GitHub execution remain NOT
+TESTED. A separate focused switchdev test passed on real OpenShift/Mellanox
+hardware without this mock module. These results do not validate the virtual
+mock-driver path.
 
 README.md provides the demo entry point, CR-to-device-plugin flow and cleanup
 links. docs/05 gives the 50-cycle/failure/stress/CI replay and ordered cleanup.
@@ -884,3 +888,151 @@ exit 0, five checks; shell syntax and git diff checks: exit 0.
 Artifacts/commands: `artifacts/main-cluster-e2e-20261006/`. Full fresh-cluster
 conformance is pending publication of these changes to main and redeployment;
 no general-kernel full-suite pass or runtime pass on 6.12/7.2 is claimed yet.
+
+## 2026-10-06 — Fresh main-branch cluster: full conformance passed
+
+The user published the running-kernel changes as public main
+`0e2e1ab6ad592c3591f3442821d3db5d33551718`. The operator virtual-cluster runner
+recreated only the authorized `virtual` cluster. Both workers cloned main and ran
+`scripts/setup-worker.sh --pf 0000:2a:00.0 --emulated-pf` without a kernel argument.
+The cached CentOS Stream 9 image runs `5.14.0-427.el9.x86_64`; matching headers
+were used automatically. Module SHA256 on both workers:
+`f2937a3be81c9a1d917fd74b9b1863d423795b13ed5f16e3ad0ab70b807a3779`.
+Management PF `0000:15:00.0` and native secondary `0000:29:00.0` retained igb;
+only the XML/MAC-attested third PF uses mock_smartnic_pf.
+
+The operator retains DEV_MODE=TRUE. Both workers directly pulled
+`quay.io/schseba/ovs-cni-plugin:latest`, digest
+`sha256:9910316ae01cbfc6219a7fa30ba83913fd25374c15a32d47056958f0505f6f29`,
+after the user made the repository public. No local OVS-CNI replacement was used.
+Kubernetes is 1.34.2, CRI-O 1.34.15, OVS 3.5.3. Operator base is
+`2716a0d4c9894428fa0cdeb233dd61a8f734315e` plus the recorded working changes;
+runner SHA256 is `72793c692d9bc3faaeaa9f9c09d3d60674fe4a73e5823846fdd13fcde91cfc81`.
+Deployment validation: exit 0, six checks passed.
+
+Actual full-suite command from the ARM64 controller's operator checkout:
+
+```sh
+OPERATOR_NAMESPACE=sriov-network-operator \
+KUBECONFIG=/home/vscode/kubeconfig/virt-cluster-k8s \
+GOARCH=arm64 GOOS=linux CLUSTER_TYPE=kubernetes \
+CLUSTER_HAS_EMULATED_PF=TRUE \
+SRIOV_NODE_AND_DEVICE_NAME_FILTER='^.*:sriovtest0$' \
+JUNIT_OUTPUT=/workspaces/k8snetworkplumbingwg/switchdev-mock-driver/artifacts/main-cluster-e2e-20261006/full-conformance \
+SUITE=./test/conformance hack/run-e2e-conformance.sh
+```
+
+Runtime passed: exit 0, **47 passed / 0 failed / 17 skipped**, all 64 specs
+selected, no focus filter. Seed 1791315682; 2026-10-06 19:41:21–20:22:29 UTC,
+2465.505 seconds of suite execution. JUnit also contains the two suite hooks.
+Skips are existing platform/hardware/Prometheus requirements, igb limitations,
+and absence of a gateway PF in the native-only selection; none skips switchdev.
+
+The shared switchdev spec passed in 263.365 seconds on virtual-worker-0:
+five real PCI VFs, operator-managed bridge br-0000_2a_00.0, two Running/Ready
+OVS-CNI pods, and 5/5 ping in both directions. Allocated PCI VFs
+0000:2a:10.2 and 0000:2a:10.4 mapped to representors msnicp0_1 and msnicp0_2.
+OVS IPv4 counters increased 0→4 and 4→9; matching TC in_hw redirects reported
+31 and 44 hardware packets. Native IPv6 traffic, VF allocation/release,
+MTU reconciliation, reboot recovery and RDMA-mode reboot transitions also passed.
+
+Cleanup passed: both workers Ready/schedulable, current-generation Ready NodeState
+conditions with syncStatus=Succeeded, empty desired interfaces/bridges, legacy
+mode, zero VFs, empty mock flow tables and no OVS bridges. Test policies, pools,
+networks, NADs and pods are gone. Injector/webhook remain enabled and the bridge
+gate is restored. Worker0's boot binding preceded kubelet; primary/native bindings
+on both workers remain igb. No hypervisor password or unrelated VM was changed.
+
+Artifacts: `artifacts/main-cluster-e2e-20261006/RUN.md`, full log and JUnit,
+switchdev log/TC dumps/two-Ready-pod snapshot, source and image digests, and
+final cleanup snapshots. Provisioning retries and orchestration errors are
+recorded separately in RUN.md; they are not reported as passing runs.
+
+Final documentation checks: `scripts/ci.sh local`, exit 0 (22 tests, one optional
+PyYAML skip); `git diff --check`, exit 0 in both repositories. No driver or
+installer code changed after the published main revision tested above.
+
+Not tested: mock module runtime on 6.12/7.2 or GitHub Actions. The shared test
+passed on real OpenShift/Mellanox devices below. The full virtual suite above supersedes the earlier pending
+publication/redeployment checkpoint.
+
+
+## OpenShift Mellanox focused test: passed (2026-10-07)
+
+Implemented in the operator tests: derive hardware-offload pool name from the
+selected node's rendered MachineConfig owner; omit the named pool's nodeSelector
+as required by admission; check effective host OVS settings on both platforms;
+remove the syncStatus-only readiness workaround. Feature-gate restoration now
+has independent cleanup. Local unit checks, compilation and lint exit 0.
+
+Runtime attempted on cnfdc10, OpenShift 5.0.0-rc.1/Kubernetes v1.36.3, RHCOS 10.2,
+worker kernel 6.12.0-211.51.1.el10_2.x86_64, real mlx5_core (15b3:101f/101d).
+No mock module was installed on physical hardware. First attempt failed admission
+because Name and nodeSelector cannot coexist. Second attempt created
+00-worker-cnf-ovs-hw-offload for worker-cnf, then its VM worker rebooted and
+remained NotReady. Interrupted safely before the baremetal hardware rollout;
+no pod traffic or offload pass is claimed.
+
+Confirmed with an isolated OVS database: a service pre-start database write
+without --no-wait waits for the not-yet-started ovs-vswitchd and exits 142;
+with --no-wait it exits 0. Fixed this command in the operator service template.
+User recovered the VM and removed it from worker-cnf. The requested rrun build
+and push completed for operator, config daemon and webhook; running imageIDs
+match the published manifests. The updated pre-start unit passed the next
+baremetal reboot and all pools returned healthy.
+
+Attempt 3 finished 08:04:39 UTC, exit 1 (0 passed, 1 failed, 63 focus-excluded).
+Five genuine VFs/representors and two Ready OVS-CNI pods were configured on
+0000:01:00.0 (15b3:101f), but the first VF pair failed ARP/ping with 100% loss.
+No target-pair hardware offload pass is claimed. Kernel and CNI setup succeeded;
+Attempt 4 reproduced the failure (exit 1, 0 passed, 1 failed, 63 focus-excluded),
+with live counters confirming VF TX but zero representor software RX/OpenFlow
+hits. Firmware health was reported healthy. Cleanup completed and all MCPs
+returned Updated/nondegraded. Through the user-supplied bastion, previous boot
+logs also show temporary API DNS lookup failures delaying kubelet recovery.
+
+User requested the unused NIC with link up. Shared discovery now requires carrier
+for switchdev traffic while preserving legacy tests' selection. Unit checks,
+conformance compilation and lint pass. Attempt 5 passed the same five-VF traffic
+flow on linked eno16705np1 / 0001:3f:00.1 / 15b3:101d, with no driver-specific
+branch or skip. The pool name was derived as worker-cnf.
+
+Exact command and environment: `attempt5/run-focused-switchdev.sh` in the artifact
+directory below. Started 08:40:53 UTC, finished 09:06:49 UTC, seed 1791362453,
+exit 0. Ginkgo: 1 passed, 0 failed, 63 focus-excluded, 1554.316 seconds.
+Five operator-created PCI VFs, two Ready OVS-CNI pods, and 5/5 ping in both
+directions. Selected IPv4 OVS type=offloaded counters increased 0→4 and 4→9;
+matching kernel TC redirects reported in_hw=true and 21/31 hardware packets.
+Both configuration/firmware reboots completed within the original readiness
+deadline. The published operator, daemon and webhook images remain deployed.
+
+Final cleanup passed: no test CRs/pods/NADs or generated MachineConfig;
+original worker-cnf rendered config and bridge gate restored. All nodes are
+Ready/schedulable, all MachineConfigPools Updated/nondegraded, and NodeState
+Ready conditions match the current generation with syncStatus=Succeeded.
+All PFs have zero VFs; the selected PF is back in legacy mode. Only existing
+br-ex/br-int remain; primary eno16695np0 still uses mlx5_core on br-ex and the
+original default route is preserved. Existing hw-offload=true remains enabled.
+Logs, commands, JUnit, source patch and cleanup snapshots:
+`artifacts/openshift-switchdev-cnfdc10-20261007/RUN.md`.
+
+## 2026-10-07 — K09 mock uplink readiness after boot
+
+Implemented in scripts/guest.sh: persistent binding brings up the one uplink
+under the exact selected PCI PF, including the already-bound probe path. Without
+this, the PF stays administratively DOWN after reboot and carrier-based shared
+switchdev discovery excludes it. No module or conformance test code changed.
+README documents the setup state; the reboot integration checks operstate=up.
+
+Local checks: scripts/ci.sh local, exit 0, 23 tests (one existing optional PyYAML
+skip); bash syntax and git diff --check, exit 0. A runnable check rejects zero
+or multiple uplinks and brings up only the selected PF uplink.
+Runtime: installed the guarded boot script on both XML-attested virtual workers,
+module main 0e2e1ab, running kernel 5.14.0-427.el9.x86_64. Both PFs report
+UP/LOWER_UP, zero mock VFs; native management/test PF drivers remain igb and
+default routes are unchanged. Exact commands, hashes and outputs:
+artifacts/parallel-full-conformance-20261007/update-worker-boot.py and
+kubernetes/worker-*-boot-update.log. This check did not validate a fresh install
+or the new script across reboot; those remain pending. The user requested
+publication to main, a fresh virtual cluster and full conformance afterward.
+The real OpenShift full suite continues independently with identical test code.

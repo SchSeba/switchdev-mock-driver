@@ -181,5 +181,9 @@ The researched operator commit is
 `/usr/lib/systemd/system/ovs-vswitchd.service` and can request a reboot when
 configuring switchdev. This is why persistent binding is a gate, not optional.
 An OpenShift/RHCOS worker needs a kernel-matched module deployment method and
-MachineConfigPool-aware changes; copying Ubuntu's `.ko` is not a solution.
+MachineConfigPool-aware changes; copying Ubuntu's `.ko` is not a solution. The
+operator repository now implements a virtual OpenShift path that builds with
+Driver Toolkit and uses a worker MachineConfig to load the module before
+kubelet. The mock-driver path has not been runtime validated; see README and
+IMPLEMENTATION-STATUS.md.
 [S11,S12,S13]

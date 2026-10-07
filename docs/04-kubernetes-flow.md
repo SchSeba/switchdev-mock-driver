@@ -20,7 +20,12 @@ only after checking context, exclusive ownership, and recovery prerequisites.
 Review generated `rendered/` manifests. The Kubernetes pool has a scoped
 `nodeSelector` and unnamed `ovsHardwareOffloadConfig` with `hw-offload=true` and
 `tc-policy=none`; a named HWOL config is an OpenShift/MachineConfigPool path. The
-optional OpenShift renderer is retained, but immutable-host delivery is untested.
+optional OpenShift renderer is retained. This `kube.sh` flow targets mutable
+Kubernetes workers. The operator repository has a separate virtual OpenShift
+runner that builds with Driver Toolkit and deploys the module through a
+worker-only MachineConfig before kubelet. Mock-driver delivery through that
+OpenShift/MCO path remains untested; see
+[README](../README.md#openshift-virtual-cluster).
 
 The operator config enables `manageSoftwareBridges`. `SriovNetworkNodePolicy`
 selects the exact `rootDevices` BDF with two netdevice VFs, switchdev, and

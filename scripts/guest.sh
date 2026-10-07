@@ -195,23 +195,23 @@ case "$(systemd-detect-virt --vm)" in qemu|kvm) ;; *) exit 1;; esac
 [[ $(cat "$P/sriov_numvfs") == 0 ]]
 [[ $(modinfo -F vermagic mock_smartnic) == "$(uname -r) "* ]] || fail 'Rebuild and install mock_smartnic for the running kernel before boot binding.'
 # Native igbvf may coexist; its soft dependency registers mock VF probing first.
-if [[ -L $P/driver && $(basename "$(readlink -f "$P/driver")") == mock_smartnic_pf ]]; then
-  modprobe igbvf
-  printf '1\n' > "$P/sriov_drivers_autoprobe"
-  exit 0
+if [[ ! -L $P/driver || $(basename "$(readlink -f "$P/driver")") != mock_smartnic_pf ]]; then
+  [[ -L $P/driver && $(basename "$(readlink -f "$P/driver")") == igb ]] || fail 'Expected native igb before boot bind.'
+  mapfile -t names < <(find "$P/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
+  ((${#names[@]} == 1)) || fail 'Expected one PF netdev before boot bind.'
+  [[ $(cat "/sys/class/net/${names[0]}/address") == "$ORIGINAL_MAC" ]] || fail 'PF MAC changed since attestation; refusing boot bind.'
+  not_used "${names[0]}" boot
+  modprobe sch_ingress; modprobe cls_flower; modprobe act_mirred
+  modprobe mock_smartnic
+  printf 'mock_smartnic_pf\n' > "$P/driver_override"
+  [[ ! -L $P/driver ]] || printf '%s\n' "$PF_BDF" > "$P/driver/unbind"
+  printf '%s\n' "$PF_BDF" > /sys/bus/pci/drivers/mock_smartnic_pf/bind
 fi
-[[ -L $P/driver && $(basename "$(readlink -f "$P/driver")") == igb ]] || fail 'Expected native igb before boot bind.'
-mapfile -t names < <(find "$P/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
-((${#names[@]} == 1)) || fail 'Expected one PF netdev before boot bind.'
-[[ $(cat "/sys/class/net/${names[0]}/address") == "$ORIGINAL_MAC" ]] || fail 'PF MAC changed since attestation; refusing boot bind.'
-not_used "${names[0]}" boot
-modprobe sch_ingress; modprobe cls_flower; modprobe act_mirred
-modprobe mock_smartnic
-printf 'mock_smartnic_pf\n' > "$P/driver_override"
-[[ ! -L $P/driver ]] || printf '%s\n' "$PF_BDF" > "$P/driver/unbind"
-printf '%s\n' "$PF_BDF" > /sys/bus/pci/drivers/mock_smartnic_pf/bind
 modprobe igbvf
 printf '1\n' > "$P/sriov_drivers_autoprobe"
+mapfile -t names < <(find "$P/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
+((${#names[@]} == 1)) || fail 'Expected one mock PF uplink after boot bind.'
+ip link set dev "${names[0]}" up
 BOOT
     chmod 0755 /usr/local/libexec/mock-smartnic-lab/boot-bind
     cat > /etc/systemd/system/mock-smartnic-lab.service <<'UNIT'

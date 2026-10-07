@@ -7,7 +7,10 @@ not prove a module works. Downloaded sources, modules and runtime logs are ignor
 
 Run `scripts/ci.sh local` for local checks, `scripts/ci.sh vm` for an exclusively
 owned prepared PF, and `scripts/ci.sh kubernetes` for the operator/pod path.
-`ci.sh openshift` explicitly skips the unconfigured immutable-host lane.
+`ci.sh openshift` still skips this repository's unconfigured immutable-host
+runtime lane. The operator repository has a separate virtual OpenShift runner
+with Driver Toolkit and worker MachineConfig delivery; that path is implemented
+but has not been runtime validated.
 
 Useful focused runtime checks under `tests/integration/`:
 
@@ -47,5 +50,5 @@ or unowned configuration files for review.
 
 Kernel build/runtime coverage is recorded in README and IMPLEMENTATION-STATUS;
 no fixed release is required by installation. Enforced module signing,
-immutable hosts/OpenShift, physical hardware, cross-worker forwarding and
-KASAN/lockdep kernels are not validated.
+mock-driver deployment through the virtual OpenShift/MCO lane, cross-worker
+forwarding and KASAN/lockdep kernels are not validated.

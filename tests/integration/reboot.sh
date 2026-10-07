@@ -36,6 +36,9 @@ bdf=$1; kernel=$2; p=/sys/bus/pci/devices/$bdf
 [[ $(uname -r) == "$kernel" ]]
 [[ $(basename "$(readlink -f "$p/driver")") == mock_smartnic_pf ]]
 [[ $(cat "$p/sriov_numvfs") == 0 && $(cat "$p/sriov_drivers_autoprobe") == 1 ]]
+mapfile -t uplinks < <(find "$p/net" -mindepth 1 -maxdepth 1 -printf '%f\n')
+((${#uplinks[@]} == 1))
+[[ $(cat "/sys/class/net/${uplinks[0]}/operstate") == up ]]
 [[ -d /sys/bus/pci/drivers/mock_smartnic_vf && -d /sys/module/igbvf ]]
 modprobe -c | grep -Fx "softdep igbvf pre: mock_smartnic"
 systemctl is-active --quiet mock-smartnic-lab.service

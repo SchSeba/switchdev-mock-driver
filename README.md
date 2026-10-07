@@ -24,6 +24,19 @@ See [architecture](docs/01-architecture.md) and [validation history](IMPLEMENTAT
 The unpinned installer and PCI/VF, TC, OVS offload and reboot checks also pass on
 CentOS Stream 9 `5.14.0-754.el9.x86_64`.
 
+A fresh cluster cloning `main` passed the complete operator conformance suite:
+**47 passed, 0 failed, 17 skipped**, including the shared five-VF switchdev test,
+on `5.14.0-427.el9.x86_64`. Two Ready pods passed bidirectional ping with increasing
+OVS offloaded IPv4 counters and matching TC `in_hw` hardware packet counters.
+See [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md) for commands and evidence.
+
+The shared operator switchdev test also passed a focused run on OpenShift
+5.0.0-rc.1/RHCOS 10.2 with real `mlx5` hardware; that run did not load this mock
+module. The operator repository also has a virtual OpenShift conformance runner
+that builds the mock module with Driver Toolkit and deploys it through a worker
+MachineConfig. This mock-driver delivery path is implemented but has not been
+runtime validated.
+
 Installation builds for the worker's running kernel using its matching headers;
 no fixed release is required. The environment above records the original runtime
 validation. Portability builds also pass on CentOS Stream 10
@@ -45,10 +58,12 @@ management interface on the native driver. Before running the installer:
 2. Confirm that PF has zero VFs, uses native `igb`, and carries no addresses,
    default/SSH routes, bridge/bond/upper device or OVS ports. Never select the first
    NIC or all devices matching a vendor ID.
-3. Provide headers/devel for the running kernel. For enforced module signing, provide an authorized
-   signed module delivery process first; this installer does not bypass signing,
-   Secure Boot, SELinux or IOMMU settings. Immutable hosts need a separate delivery
-   path and are not supported by the installer.
+3. Provide headers/devel for the running kernel. For enforced module signing,
+   provide an authorized signed module delivery process first; this installer
+   does not bypass signing, Secure Boot, SELinux or IOMMU settings. This direct
+   installer does not support immutable hosts; use the operator repository's
+   virtual OpenShift runner for its separate Driver Toolkit/MachineConfig path,
+   which is not yet runtime validated.
 
 Clone the published repository's `main` branch. Replace the example URL and BDF
 with your own attested values; record `git rev-parse HEAD` with the test results:
@@ -69,7 +84,8 @@ the signed CentOS archive when needed.
 
 It saves native binding state in `/var/lib/mock-smartnic-lab/BDF`, installs scoped
 NetworkManager rules for the test PF/mock ports, and persists the module/binding
-before kubelet and OVS start. Boot binding also checks the saved native PF MAC
+before kubelet and OVS start. It brings up only the selected PF's PCI-parented
+uplink so carrier-based discovery works after reboot. Boot binding also checks the saved native PF MAC
 to detect a changed PCI topology. A reversible `softdep igbvf pre: mock_smartnic`
 loads the mock VF driver before native `igbvf`. The mock probe accepts only VFs of
 the selected PF; native VFs on another test PF still bind to `igbvf`. Initial setup
@@ -112,11 +128,42 @@ NICs attach to the same dedicated network. It attests their explicitly configure
 MACs in libvirt XML, resolves the third NIC to an exact guest PF,
 clones `main`, records the installed commit, and calls `setup-worker.sh`. It enables the
 operator's existing `DEV_MODE` for emulated NICs. SSH waits and setup have deadlines.
-Regular tests select the attested native `sriovtest0`. Switchdev tests exclude
+Regular tests select the attested native `sriovtest0`. Switchdev tests require carrier, exclude
 default-route interfaces and OVS ports, then select supported switchdev drivers
 (`mlx5_core`, `ice`, `mock_smartnic_pf`). All use the same five-VF policy, managed
 OVS bridge, pod traffic and standard TC/OVS offload checks. Without
 `MOCK_SMARTNIC_REPO`, no mock driver is installed.
+
+### OpenShift virtual cluster
+
+The OpenShift runner is `hack/run-e2e-conformance-virtual-ocp.sh` in the
+`sriov-network-operator` repository. It recreates its named cluster, so run it
+on the test hypervisor with a disposable cluster and an OpenShift pull secret at
+`$HOME/openshift_pull.json`:
+
+```bash
+# From the sriov-network-operator checkout
+SKIP_DELETE=TRUE make test-e2e-conformance-virtual-ocp-cluster
+```
+
+The mock driver is enabled by default. The runner uses the sibling
+`switchdev-mock-driver` checkout when present; set `MOCK_DRIVER_SOURCE` to
+select another local checkout. If no local checkout is available, it clones
+`MOCK_SMARTNIC_REPO` (the default is this repository's public URL). The runner
+requires at least three workers. Set `SKIP_TEST=TRUE` to provision the cluster
+and driver without running conformance. `SKIP_DELETE=TRUE` leaves the created
+cluster for inspection; the runner still deletes any cluster with the same
+name before it starts.
+
+Each worker has management virtio, two native emulated `igb` test PFs, and a
+third emulated `igb` PF for the mock driver. The runner builds a kernel-matched
+image in a privileged pod using the cluster's Driver Toolkit, pushes it to the
+internal registry, caches it on every worker, and applies a worker-only
+MachineConfig that starts the module before kubelet. It verifies switchdev,
+real VFs, OVS representors and bidirectional traffic, then restores zero VFs
+and legacy mode before operator conformance. RHCOS receives no development
+packages. This delivery and test path is implemented, but OpenShift/MCO runtime
+validation of the mock driver remains pending; see [IMPLEMENTATION-STATUS.md](IMPLEMENTATION-STATUS.md).
 
 ## Test the driver and the full pod path
 

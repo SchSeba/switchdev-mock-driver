@@ -67,6 +67,24 @@ class WorkerSetupTests(unittest.TestCase):
             self.assertEqual(passed, result.returncode == 0, result.stderr)
             self.assertEqual(passed, 'SAFE' in result.stdout)
 
+    def test_boot_brings_up_only_the_selected_pf_uplink(self):
+        boot = (ROOT/'scripts/guest.sh').read_text().split("<<'BOOT'\n", 1)[1].split('\nBOOT', 1)[0]
+        self.assertNotIn('exit 0', boot)
+        uplink = 'mapfile -t names' + boot.rsplit('mapfile -t names', 1)[1]
+        with tempfile.TemporaryDirectory() as directory:
+            net = Path(directory)/'net'
+            net.mkdir()
+            for count in (0, 1, 2):
+                if count:
+                    (net/f'uplink{count}').mkdir()
+                result = subprocess.run(
+                    ['bash', '-c', 'set -e; P=$1; fail() { exit 1; }; '
+                     'ip() { printf "%s\\n" "$*"; }; '+uplink, 'test', directory],
+                    text=True, capture_output=True)
+                self.assertEqual(count == 1, result.returncode == 0, result.stderr)
+                self.assertEqual('link set dev uplink1 up' if count == 1 else '',
+                                 result.stdout.strip())
+
     def test_primary_and_ownership_guards(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
